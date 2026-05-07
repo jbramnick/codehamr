@@ -26,6 +26,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/codehamr/codehamr/internal/cloud"
@@ -164,7 +165,12 @@ type Client struct {
 	// turns skip straight to the supported shape. A `/models` switch
 	// builds a fresh Client and the flag resets, which is correct: the
 	// new endpoint may be a different provider with different rules.
-	noReasoningEffort bool
+	//
+	// atomic.Bool because Probe and Chat can run concurrently against
+	// the same Client (startup probe still in flight when the user
+	// fires their first turn), and both call postChat which reads this
+	// flag; Chat may also write it. A plain bool would be a Go data race.
+	noReasoningEffort atomic.Bool
 }
 
 func New(base, model, token string) *Client {
@@ -296,7 +302,7 @@ func (c *Client) sendChat(parent context.Context, msgs []chmctx.Message, tools [
 // without parsing JSON shapes that differ between providers. Probe never
 // sets ReasoningEffort, so its 400 path can never trip the flag.
 func (c *Client) postChat(parent context.Context, body chatRequest) (*http.Response, cloud.BudgetStatus, error) {
-	if c.noReasoningEffort {
+	if c.noReasoningEffort.Load() {
 		body.ReasoningEffort = ""
 	}
 	resp, budget, errBody, err := c.doPost(parent, body)
@@ -304,7 +310,7 @@ func (c *Client) postChat(parent context.Context, body chatRequest) (*http.Respo
 		bytes.Contains(errBody, []byte("not support")) &&
 		(bytes.Contains(errBody, []byte("reasoning_effort")) ||
 			bytes.Contains(errBody, []byte("thinking"))) {
-		c.noReasoningEffort = true
+		c.noReasoningEffort.Store(true)
 		body.ReasoningEffort = ""
 		resp, budget, _, err = c.doPost(parent, body)
 	}

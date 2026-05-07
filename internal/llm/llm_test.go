@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/codehamr/codehamr/internal/cloud"
@@ -530,6 +531,48 @@ func TestChatFallsBackWhenReasoningEffortRejected(t *testing.T) {
 	if strings.Contains(bodies[0], `"reasoning_effort"`) {
 		t.Fatalf("second turn must not resend reasoning_effort: %s", bodies[0])
 	}
+}
+
+// TestProbeChatNoReasoningEffortIsRaceFree pins the atomic.Bool guard on
+// Client.noReasoningEffort. In production, the startup probe goroutine and
+// the first chat goroutine can run on the same *Client at the same time
+// (probe is fired by Init, chat starts when the user submits before the
+// probe returns). Both call postChat which reads the flag, and Chat may
+// write it on a 400 fallback. With a plain bool that's a Go data race;
+// running this test under -race must come back clean.
+func TestProbeChatNoReasoningEffortIsRaceFree(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		// Force the 400 → write c.noReasoningEffort branch on every chat
+		// that still ships reasoning_effort, so concurrent writes from
+		// multiple Chat goroutines exercise the same write path.
+		if strings.Contains(string(b), `"reasoning_effort"`) {
+			w.WriteHeader(400)
+			fmt.Fprint(w, `{"error":{"message":"reasoning_effort not supported"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: "+`{"choices":[{"delta":{"content":"ok"}}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "m", "")
+
+	var wg sync.WaitGroup
+	for range 50 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _ = c.Probe(context.Background())
+		}()
+		go func() {
+			defer wg.Done()
+			for range c.Chat(context.Background(), nil, nil) {
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // TestChatFallsBackWhenOllamaRejectsThinking: Ollama rejects
