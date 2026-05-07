@@ -3,7 +3,7 @@
 A minimal coding agent for the terminal. Built for local LLMs, also
 runs on OpenAI compatible endpoints.
 
-## Why minimal
+## Simplicity
 
 A coding agent built for local LLMs has to make different decisions
 than one built for frontier cloud models. Context is precious. Every
@@ -35,9 +35,7 @@ curl -fsSL https://codehamr.com/install.cmd -o install.cmd && install.cmd
 
 Then run `codehamr` in your project.
 
-> Warning: codehamr is an AI system that runs model-generated commands with
-> full shell and filesystem access. AI systems make mistakes. Run it
-> inside a devcontainer or VM.
+> **Warning:** AI systems like codehamr run model-generated shell commands with full filesystem access. Best run inside safe sandboxes like devcontainers or isolated VMs.
 
 ## Config
 
@@ -54,12 +52,12 @@ models:
         llm: qwen3.6:27b
         url: http://localhost:11434
         key: ""
-        context_size: 65536
+        context_size: 131072
     openai:
         llm: gpt-5.5
         url: https://api.openai.com
         key: sk-...
-        context_size: 128000
+        context_size: 131072
     hamrpass:
         llm: hamrpass
         url: https://codehamr.com
@@ -68,21 +66,22 @@ models:
 
 `/models` lists profiles, `/models <name>` switches.
 
-## Keyboard
+## Hardware
 
-* `/` or `Tab` on an empty prompt opens the slash command popover
-* `Tab` / `Shift+Tab` cycle, `Enter` accepts, `Esc` closes
-* `↑` / `↓` walk through prior submissions, `Alt+Enter` inserts a newline
-* `Ctrl+L` clears the prompt, `Ctrl+C` cancels or quits, `Ctrl+D` quits on empty
+codehamr is tuned for the ~30B LLM class. We clearly recommend **qwen3.6:27b** or similar at 128k context, which needs **32 GB+ unified memory or VRAM**. Ollama desktop users must lift "Context length" in the app settings themselves, otherwise it caps at 4k silently.
 
-## Other tools in this space
+Bare minimum fallback: **qwen3.5:9b at 64k** on **12 GB+ unified memory or VRAM**. Quality drops noticeably (weaker reasoning, more verify retries, more loop slips). If neither tier fits your machine, the optional HamrPass might be worth a try, or use your own OpenAI API key.
 
-If you want plugins, sub agents and configure every detail on your own,
-[opencode](https://github.com/anomalyco/opencode) and
-[pi-coding-agent](https://github.com/badlogic/pi-mono) are excellent.
-Claude Code and Codex are the polished commercial options.
+## Compare
 
-## What is HamrPass?
+| Tool | Pick if |
+|---|---|
+| **Frontier** | you want commercial heavyweight polish (Claude Code, Codex) and accept the subscription cost and session timeouts |
+| **[opencode](https://github.com/anomalyco/opencode)** | you want a great, loaded Swiss army knife and embrace plugin complexity |
+| **[pi-coding-agent](https://github.com/badlogic/pi-mono)** | you want something lighter than opencode and accept configuring your own extensions, skills, and themes |
+| **codehamr** | you want the lightest take on simplicity over complexity and accept no plugins, skills, or sub-agents |
+
+## HamrPass
 
 We love local LLMs and always will. codehamr is built fully open
 source with an MIT license and always will be. Connect to your
