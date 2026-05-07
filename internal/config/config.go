@@ -118,7 +118,12 @@ func Bootstrap(projectRoot string) (*Config, bool, error) {
 	dir := filepath.Join(projectRoot, DirName)
 	created := false
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		// 0o700 because config.yaml inside this directory may carry the
+		// hamrpass key (a long-lived bearer token tied to the user's pass
+		// budget). World-listable parents would let other local users see
+		// that the directory exists and probe for the key file. The user
+		// owning the project is the only legitimate reader.
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, false, err
 		}
 		created = true
@@ -212,7 +217,11 @@ func writeYAML(path string, v any) error {
 		return err
 	}
 	header := []byte("# codehamr configuration\n\n")
-	return os.WriteFile(path, append(header, b...), 0o644)
+	// 0o600 because config.yaml carries the hamrpass key once /hamrpass
+	// activates a profile. World-readable was the prior default and made
+	// the bearer token visible to every local account on the machine.
+	// The user owning the project is the only legitimate reader.
+	return os.WriteFile(path, append(header, b...), 0o600)
 }
 
 // ActiveProfile returns the currently-selected profile. Bootstrap guarantees

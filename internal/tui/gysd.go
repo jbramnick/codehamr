@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -174,6 +175,13 @@ func firstNonBlankLine(s string) string {
 // JSON unmarshalling produces float64 for numbers; returning 0 on missing/
 // wrong-type lets callers treat 0 as "use default". Negative values from
 // the model are also returned as 0 — gysd.PreVerify clamps anyway.
+//
+// NaN and ±Inf are also returned as 0: NaN comparisons evaluate to false,
+// so the `n < 0` gate would let it through, and `int(NaN)` is
+// implementation-defined in Go (yields MinInt64 on amd64). Both would
+// then propagate into time.Duration arithmetic and produce nonsense. The
+// JSON spec disallows non-finite numbers anyway, so a sane backend never
+// sends them — defensive only.
 func argInt(args map[string]any, name string) int {
 	v, ok := args[name]
 	if !ok {
@@ -181,7 +189,7 @@ func argInt(args map[string]any, name string) int {
 	}
 	switch n := v.(type) {
 	case float64:
-		if n < 0 {
+		if n < 0 || math.IsNaN(n) || math.IsInf(n, 0) {
 			return 0
 		}
 		return int(n)

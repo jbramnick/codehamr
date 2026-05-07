@@ -130,6 +130,35 @@ func TestPreVerifyTimeoutClamping(t *testing.T) {
 	}
 }
 
+// TestPreVerifyTimeoutOverflowClamped is the regression for the int64
+// overflow trap: extreme integer seconds (e.g. 1e18) multiplied into a
+// time.Duration wrap to a negative value, and `min(negative, MaxTimeout)`
+// returns the negative — context.WithTimeout would fire instantly and the
+// verify subprocess would die before it ran. Clamping seconds first keeps
+// every input in the safe domain. Mirrors the same defence already in place
+// for the bash tool (see TestBashTimeoutOverflowClamped).
+func TestPreVerifyTimeoutOverflowClamped(t *testing.T) {
+	s := newSession(t)
+	cases := []int{
+		1_000_000_000,      // 31 years — within int64 but well past MaxTimeout
+		10_000_000_000,     // first value that overflows when multiplied by 1e9
+		1 << 60,            // far past int64 wrap boundary
+		int(^uint(0) >> 1), // MaxInt — pathological model output
+	}
+	for _, in := range cases {
+		run, got, _ := s.PreVerify("ls", in)
+		if !run {
+			t.Fatalf("PreVerify(timeout=%d) refused to run; the gate should clamp, not reject", in)
+		}
+		if got <= 0 {
+			t.Fatalf("PreVerify(timeout=%d) = %v — must be positive (negative duration = instant cancel)", in, got)
+		}
+		if got != MaxTimeout {
+			t.Fatalf("PreVerify(timeout=%d) = %v, want MaxTimeout=%v", in, got, MaxTimeout)
+		}
+	}
+}
+
 func TestVerifyOutputCapped(t *testing.T) {
 	s := newSession(t)
 	huge := strings.Repeat("x", MaxOutputBytes+1024)

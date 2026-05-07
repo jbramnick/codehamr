@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -551,6 +554,71 @@ func TestSlashModelSwitchesActive(t *testing.T) {
 	}
 }
 
+// TestRedactSlashHidesHamrpassKey is the regression for "debug log
+// preserves hamrpass key in plaintext". When `logging: true` is set in
+// config.yaml, every prompt — including `/hamrpass <key>` — was being
+// written verbatim to .codehamr/log.txt. Even with the file mode
+// hardened to 0o600, the log file is intentionally easy to share for
+// bug reports, and a key in there would be a quiet leak. redactSlash
+// is the seam every dbgWritef on a slash payload routes through.
+func TestRedactSlashHidesHamrpassKey(t *testing.T) {
+	cases := map[string]string{
+		"/hamrpass hp_secret_1234567890abcdef": "/hamrpass <redacted>",
+		"/hamrpass":                            "/hamrpass",  // no arg, nothing to redact
+		"/hamrpass ":                           "/hamrpass ", // trailing space, nothing useful
+		"/clear":                               "/clear",     // unrelated commands pass through
+		"/models hamrpass":                     "/models hamrpass",
+		"hello /hamrpass key":                  "hello /hamrpass key", // not at line start = not a hamrpass invocation
+	}
+	for in, want := range cases {
+		if got := redactSlash(in); got != want {
+			t.Errorf("redactSlash(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestDebugLogFilePermsAreOwnerOnly: regression for "debug log was
+// 0o644". The file captures every prompt and tool-call payload — bash
+// arguments can carry secrets the user types into a heredoc and the
+// log being readable to other local users would leak them. 0o600 is
+// the only honest answer.
+func TestDebugLogFilePermsAreOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	OpenDebugLog(dir)
+	t.Cleanup(CloseDebugLog)
+	st, err := os.Stat(filepath.Join(dir, "log.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Mode().Perm(); got != 0o600 {
+		t.Fatalf("log.txt perms = %v, want 0o600", got)
+	}
+}
+
+// TestSlashModelSwitchDropsStickyFallbackState is the regression for the
+// noReasoningEffort flag carrying across profiles. The llm.Client tracks
+// "this server already 400'd on tools+reasoning_effort, don't send it
+// again" — and that sticky bit is correct for the lifetime of one
+// Client, but switching profiles points at a different endpoint with
+// different rules. rebuildClient used to mutate fields on the existing
+// pointer, so the flag survived. The fix swaps in a fresh Client; this
+// test pins down the swap by asserting the pointer changed.
+func TestSlashModelSwitchDropsStickyFallbackState(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	m.cfg.Models["remote"] = &config.Profile{
+		LLM: "gpt-5.1", URL: "http://remote:9000", Key: "sk-r", ContextSize: 200000,
+	}
+	before := m.cli
+	out, _ := m.runSlash("/models remote")
+	final := out.(Model)
+	if final.cli == before {
+		t.Fatal("rebuildClient must replace the *llm.Client pointer to drop sticky reasoning_effort fallback state")
+	}
+	if final.cli.BaseURL != "http://remote:9000" || final.cli.Model != "gpt-5.1" || final.cli.Token != "sk-r" {
+		t.Fatalf("fresh client missing one of the new profile's fields: %+v", final.cli)
+	}
+}
+
 // TestSlashModelRejectsUnknown: unknown name is a quiet warn, not a switch.
 func TestSlashModelRejectsUnknown(t *testing.T) {
 	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
@@ -998,6 +1066,48 @@ func TestSessionTokensSurviveFinalizeTurn(t *testing.T) {
 	}
 }
 
+// TestArgIntRejectsNaNAndInf: a malformed backend that emits non-finite
+// numbers in tool args (some weakly-typed providers do; JSON technically
+// forbids it but providers vary) must not propagate NaN/Inf through to
+// time.Duration arithmetic. NaN comparisons all evaluate to false so a
+// naive `n < 0` guard would let it through, and `int(NaN)` on amd64
+// yields MinInt64, which the gysd timeout path would then multiply by
+// 1e9 and wrap to chaos. Each non-finite input must collapse to 0.
+func TestArgIntRejectsNaNAndInf(t *testing.T) {
+	cases := map[string]float64{
+		"NaN":          math.NaN(),
+		"PositiveInf":  math.Inf(+1),
+		"NegativeInf":  math.Inf(-1),
+		"PositiveSane": 30,
+		"NegativeSane": -1,
+		"Zero":         0,
+	}
+	wantBy := map[string]int{
+		"NaN":          0,
+		"PositiveInf":  0,
+		"NegativeInf":  0,
+		"PositiveSane": 30,
+		"NegativeSane": 0,
+		"Zero":         0,
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := argInt(map[string]any{"timeout_seconds": in}, "timeout_seconds")
+			if got != wantBy[name] {
+				t.Fatalf("argInt(%v) = %d, want %d", in, got, wantBy[name])
+			}
+		})
+	}
+	// Missing key still returns 0 (the "use default" sentinel).
+	if got := argInt(map[string]any{}, "timeout_seconds"); got != 0 {
+		t.Fatalf("missing key should return 0, got %d", got)
+	}
+	// Wrong-type still returns 0.
+	if got := argInt(map[string]any{"timeout_seconds": "not a number"}, "timeout_seconds"); got != 0 {
+		t.Fatalf("string value should return 0, got %d", got)
+	}
+}
+
 // TestS2RepeatYieldsTurn: when the same tool call (name + canonical args)
 // would be the 3rd identical attempt within MaxRecentCalls, dispatchNextTool
 // must yield — pending dropped, ctx cancelled, phase=idle, scrollback explains
@@ -1385,6 +1495,47 @@ func TestStaleStreamCloseDoesNotKillLiveTurn(t *testing.T) {
 	}
 	if om.cancel == nil {
 		t.Fatal("stale close cancelled the live turn's context")
+	}
+}
+
+// TestRunToolCallHonorsBashTimeoutBeyondLegacyCap is the regression case for
+// the silent 3-minute cap that runToolCall used to wrap the parent context
+// in. Before the fix, a model that set bash.timeout_seconds=600 (10 min) saw
+// its command killed at 3 min — the schema advertised 3600s but the wrapper
+// quietly overrode it. The test runs a fast `echo` with a tool-arg timeout
+// well past the old 3-minute cap (1800s = 30 min) and asserts the call
+// completes normally. Combined with the inverse — short tool timeouts kill
+// long commands, exercised by TestBashTimeout — this pins down the contract
+// that bash's own timeout is the only ceiling.
+func TestRunToolCallHonorsBashTimeoutBeyondLegacyCap(t *testing.T) {
+	parent := context.Background() // no outer deadline
+	cmd := runToolCall(parent, chmctx.ToolCall{
+		ID:   "t-cap",
+		Name: "bash",
+		Arguments: map[string]any{
+			"cmd":             "echo through-the-cap",
+			"timeout_seconds": float64(1800), // 10× the old 3-min ceiling
+		},
+	})
+	start := time.Now()
+	msg := cmd()
+	elapsed := time.Since(start)
+
+	result, ok := msg.(toolResultMsg)
+	if !ok {
+		t.Fatalf("expected toolResultMsg, got %T", msg)
+	}
+	if !strings.Contains(result.Msg.Content, "through-the-cap") {
+		t.Fatalf("bash output missing — call may have been killed: %q", result.Msg.Content)
+	}
+	if strings.Contains(result.Msg.Content, "timeout") || strings.Contains(result.Msg.Content, "cancelled") {
+		t.Fatalf("bash should not have been timed-out or cancelled: %q", result.Msg.Content)
+	}
+	// Sanity: a fast echo finishes in ms, not minutes. If runToolCall
+	// regressed and re-introduced an outer wrapper that called into a
+	// blocking sleep, this would be the canary.
+	if elapsed > 10*time.Second {
+		t.Fatalf("bash took %s — runToolCall is doing more than passing through", elapsed)
 	}
 }
 

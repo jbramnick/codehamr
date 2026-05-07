@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -102,5 +103,75 @@ func TestPromptHistoryCorruptLineSkipped(t *testing.T) {
 	got := loadPromptHistory(dir)
 	if len(got) != 1 || got[0].display != "valid" {
 		t.Errorf("expected 1 valid entry, got %+v", got)
+	}
+}
+
+// TestPromptHistoryConcurrentAppendsKeepBoth is the regression for the
+// load-then-rewrite race: when two codehamr instances (same project dir)
+// submit prompts simultaneously, both readers saw the same N entries,
+// each appended their own, and the second writer's full-file overwrite
+// silently dropped the first one's submit. With O_APPEND each instance
+// only writes its own line and both survive.
+func TestPromptHistoryConcurrentAppendsKeepBoth(t *testing.T) {
+	dir := t.TempDir()
+
+	const n = 50
+	done := make(chan struct{}, 2)
+	go func() {
+		for i := 0; i < n; i++ {
+			_ = appendPromptHistory(dir, fmt.Sprintf("alpha-%d", i))
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		for i := 0; i < n; i++ {
+			_ = appendPromptHistory(dir, fmt.Sprintf("beta-%d", i))
+		}
+		done <- struct{}{}
+	}()
+	<-done
+	<-done
+
+	got := loadPromptHistory(dir)
+	if len(got) != 2*n {
+		t.Fatalf("concurrent appends lost entries: got %d/%d", len(got), 2*n)
+	}
+	seen := map[string]bool{}
+	for _, e := range got {
+		seen[e.display] = true
+	}
+	for i := 0; i < n; i++ {
+		if !seen[fmt.Sprintf("alpha-%d", i)] {
+			t.Fatalf("alpha-%d missing from history", i)
+		}
+		if !seen[fmt.Sprintf("beta-%d", i)] {
+			t.Fatalf("beta-%d missing from history", i)
+		}
+	}
+}
+
+// TestPromptHistoryRejectsHugeEntry: a multi-MiB paste must not get
+// stored verbatim — the prior load path used a 1 MiB scanner cap and
+// would silently drop oversized entries on next load anyway, so
+// declining to store is the consistent behaviour. Anything sane
+// (a paragraph of code, a stack trace) still survives.
+func TestPromptHistoryRejectsHugeEntry(t *testing.T) {
+	dir := t.TempDir()
+	huge := strings.Repeat("x", historyMaxEntryBytes+1)
+	if err := appendPromptHistory(dir, huge); err != nil {
+		t.Fatal(err)
+	}
+	got := loadPromptHistory(dir)
+	if len(got) != 0 {
+		t.Fatalf("oversized entry should not be saved, got %d", len(got))
+	}
+	// At-the-cap entry still saves.
+	atCap := strings.Repeat("y", historyMaxEntryBytes)
+	if err := appendPromptHistory(dir, atCap); err != nil {
+		t.Fatal(err)
+	}
+	got = loadPromptHistory(dir)
+	if len(got) != 1 || got[0].display != atCap {
+		t.Fatalf("at-cap entry should round-trip, got %d entries", len(got))
 	}
 }

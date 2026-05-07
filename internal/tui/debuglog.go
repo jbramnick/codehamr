@@ -25,12 +25,18 @@ var (
 // OpenDebugLog truncates <dir>/log.txt and opens it for writing. A failure
 // is reported once on stderr and silently disables logging for the rest of
 // the run — the debug log must never block the TUI from starting.
+//
+// 0o600 because the log captures every prompt the user submits — slash
+// commands like /hamrpass <key> as well as bash arguments that may
+// include secrets the user pasted into a heredoc. Even with the slash
+// redaction below, the bash channel can carry creds in command-line
+// arguments. Owner-only is the only honest answer.
 func OpenDebugLog(dir string) {
 	if dir == "" {
 		return
 	}
 	path := filepath.Join(dir, "log.txt")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "⚠ debuglog:", err)
 		return
@@ -49,6 +55,27 @@ func CloseDebugLog() {
 		_ = dbgFile.Close()
 		dbgFile = nil
 	}
+}
+
+// redactSlash strips secrets from a slash-command line before it lands
+// in the debug log. /hamrpass <key> is the canonical case — the
+// hamrpass key is a long-lived bearer token tied to the user's
+// prepaid budget, and a debug log dropped on a shared box (or
+// committed by accident, or attached to a bug report) shouldn't leak
+// it. Other slash commands have nothing sensitive in their args, but
+// the central hook means any future secret-bearing command is
+// covered by editing one place.
+func redactSlash(line string) string {
+	const prefix = "/hamrpass "
+	if !strings.HasPrefix(line, prefix) {
+		return line
+	}
+	rest := strings.TrimPrefix(line, prefix)
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return line
+	}
+	return prefix + "<redacted>"
 }
 
 // dbgWritef appends one timestamped record. No-op when logging is off.

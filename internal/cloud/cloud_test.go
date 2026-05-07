@@ -43,6 +43,25 @@ func TestFromHeadersClampsAndParses(t *testing.T) {
 	}
 }
 
+// TestFromHeadersRejectsNaNAndInf is the regression: strconv.ParseFloat
+// happily returns NaN/±Inf without an error, all NaN comparisons evaluate
+// to false (so the [0,1] clamp is a no-op), and the resulting "valid"
+// BudgetStatus then renders through int(NaN*100+0.5) → MinInt64 in the
+// status bar. Both must collapse to the same zero value as a missing header.
+func TestFromHeadersRejectsNaNAndInf(t *testing.T) {
+	cases := []string{"NaN", "+Inf", "-Inf", "Infinity"}
+	for _, raw := range cases {
+		t.Run(raw, func(t *testing.T) {
+			h := http.Header{}
+			h.Set("X-Budget-Remaining", raw)
+			got := FromHeaders(h)
+			if got.Set {
+				t.Fatalf("X-Budget-Remaining=%q must be treated as missing, got %+v", raw, got)
+			}
+		})
+	}
+}
+
 func TestStatusSuffix(t *testing.T) {
 	if got := (BudgetStatus{}).StatusSuffix(); got != "" {
 		t.Fatalf("zero value must render empty, got %q", got)

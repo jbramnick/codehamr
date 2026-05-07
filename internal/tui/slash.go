@@ -7,6 +7,8 @@ import (
 	"text/tabwriter"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/codehamr/codehamr/internal/llm"
 )
 
 // argOption is one entry in the popover — used both at command-level (one row
@@ -150,11 +152,14 @@ func (m *Model) confirmActive(profile string) tea.Cmd {
 	return pingBackend(m.cli.BaseURL)
 }
 
+// rebuildClient swaps in a fresh llm.Client for the now-active profile.
+// Replacing the pointer rather than mutating fields drops the prior
+// Client's sticky fallback state (noReasoningEffort, HTTP keep-alive
+// pool tied to the prior URL) — different endpoint, different rules,
+// fresh slate is what the user expects after a switch.
 func (m *Model) rebuildClient() {
 	p := m.cfg.ActiveProfile()
-	m.cli.BaseURL = strings.TrimRight(m.cfg.ActiveURL(), "/")
-	m.cli.Token = p.Key
-	m.cli.Model = p.LLM
+	m.cli = llm.New(m.cfg.ActiveURL(), p.LLM, p.Key)
 }
 
 func (m Model) cmdClear(_ []string) (tea.Model, tea.Cmd) {

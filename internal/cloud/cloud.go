@@ -12,6 +12,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"net/http"
 	"strconv"
 )
@@ -19,6 +21,11 @@ import (
 // Reachable does a GET against baseURL with ctx as its deadline. Any HTTP
 // response, even 401 or 404, counts as reachable; only transport errors
 // and timeouts return non-nil. Used by the TUI's live connectivity probe.
+//
+// The body is drained before close so the underlying TCP connection can be
+// returned to the pool and reused for the next probe — closing without
+// draining can leak the connection in keep-alive setups (the server keeps
+// it open expecting more reads, the client never makes them).
 func Reachable(ctx context.Context, baseURL string) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/", nil)
 	if err != nil {
@@ -28,6 +35,7 @@ func Reachable(ctx context.Context, baseURL string) error {
 	if err != nil {
 		return err
 	}
+	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
 	return nil
 }
@@ -57,6 +65,12 @@ type BudgetStatus struct {
 // segment. Out-of-range values are clamped rather than rejected because a
 // brief over-shoot above 1.0 (server-side rounding) shouldn't blank the
 // status segment.
+//
+// NaN and ±Inf are rejected outright: NaN comparisons are always false, so
+// it would slip past the clamp; the downstream UI then renders
+// `int(NaN*100+0.5)`, which on amd64 yields MinInt64 → "-9223372036854775808% pass".
+// Inf is similarly nonsensical for a fraction. Treating both as "no signal"
+// matches the behaviour of a missing header.
 func FromHeaders(h http.Header) BudgetStatus {
 	raw := h.Get(headerRemaining)
 	if raw == "" {
@@ -64,6 +78,9 @@ func FromHeaders(h http.Header) BudgetStatus {
 	}
 	v, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
+		return BudgetStatus{}
+	}
+	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return BudgetStatus{}
 	}
 	switch {

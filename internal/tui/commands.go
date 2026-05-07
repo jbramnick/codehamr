@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"errors"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -48,11 +47,16 @@ func readEvent(ch <-chan llm.Event) tea.Cmd {
 
 // runToolCall executes one tool call off the UI goroutine. The parent context
 // is the per-turn root; a Ctrl+C cancel of the turn aborts the tool mid-run.
+//
+// No outer timeout is wrapped here — bash and write_file own their own
+// per-call timeouts (bash defaults to 2 min, capped at 3600s by the schema;
+// write_file is filesystem-fast and uses no timeout). Wrapping in a hardcoded
+// outer cap would silently override the model-set bash timeout, so a request
+// for a 30-min docker build would die at 3 min with a confusing "timeout"
+// inside an hour-long apparent allowance.
 func runToolCall(parent context.Context, call chmctx.ToolCall) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
-		defer cancel()
-		return toolResultMsg{Msg: tools.Execute(ctx, call)}
+		return toolResultMsg{Msg: tools.Execute(parent, call)}
 	}
 }
 

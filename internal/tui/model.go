@@ -462,7 +462,7 @@ func (m Model) submit(sendText, echoText string, entry promptEntry) (tea.Model, 
 	_ = appendPromptHistory(m.cfg.Dir, sendText)
 
 	if strings.HasPrefix(sendText, "/") {
-		dbgWritef("user_slash", "%s", sendText)
+		dbgWritef("user_slash", "%s", redactSlash(sendText))
 		return m.runSlash(sendText)
 	}
 	// Every user message starts a fresh GYSD sub-loop: the previous

@@ -38,11 +38,14 @@ import (
 // checksumsURL is the "latest" redirect GitHub serves for the goreleaser
 // checksums asset. Direct CDN download — no GitHub API call, so no 60/hour
 // rate limit to worry about even for users who start many TUI sessions.
-const checksumsURL = "https://github.com/codehamr/codehamr/releases/latest/download/codehamr_checksums.txt"
+//
+// `var` rather than `const` so tests can point both URLs at an httptest
+// server; production code never reassigns them.
+var checksumsURL = "https://github.com/codehamr/codehamr/releases/latest/download/codehamr_checksums.txt"
 
 // releaseBase is the stable "latest" redirect for individual binary assets.
 // Paired with asset names from assetName() to form the download URL in Apply.
-const releaseBase = "https://github.com/codehamr/codehamr/releases/latest/download/"
+var releaseBase = "https://github.com/codehamr/codehamr/releases/latest/download/"
 
 // fetchTimeout bounds the checksums.txt GET. Matches the TUI's own ping
 // budget so a silent network can't extend startup.
@@ -104,11 +107,19 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// Apply downloads the current platform's binary from the "latest" release
-// and atomically replaces execPath with it. Intended to be called at
-// startup from main.go — the caller is expected to syscall.Exec afterwards
-// so the running process turns into the new binary without an intermediate
+// Apply downloads the current platform's binary from the "latest" release,
+// verifies its sha256 against the published `codehamr_checksums.txt`, and
+// atomically replaces execPath with it. Intended to be called at startup
+// from main.go — the caller is expected to syscall.Exec afterwards so the
+// running process turns into the new binary without an intermediate
 // user-visible restart.
+//
+// The checksum verification closes the supply-chain hole that an unchecked
+// download would leave open: a corrupted CDN response, a TLS-MITM corporate
+// proxy, or a release tarball where the binary was swapped but the manifest
+// wasn't would all install whatever bytes arrived. With verification, any
+// such mismatch returns a clear error before the binary is promoted onto
+// the running path.
 //
 // The temp file is created in the same directory as execPath so os.Rename
 // stays an atomic intra-filesystem move. If the directory is read-only
@@ -116,12 +127,19 @@ func hashFile(path string) (string, error) {
 // EACCES — the error is returned verbatim so main.go can print a helpful
 // hint about rerunning with sudo or using a user-local PREFIX.
 //
-// ctx governs the whole download; no http.Client.Timeout is set so the
-// caller controls the budget exclusively.
+// ctx governs both fetches; no http.Client.Timeout is set on the binary
+// download so the caller's ctx deadline is the only budget.
 func Apply(ctx context.Context, execPath string) error {
 	asset, ok := assetName(runtime.GOOS, runtime.GOARCH)
 	if !ok {
 		return fmt.Errorf("unsupported platform: %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	expected, err := fetchHash(ctx, asset)
+	if err != nil {
+		return fmt.Errorf("checksum lookup: %w", err)
+	}
+	if expected == "" {
+		return fmt.Errorf("checksum lookup: no entry for %s in published manifest", asset)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(execPath), ".codehamr-update-*")
 	if err != nil {
@@ -149,11 +167,19 @@ func Apply(ctx context.Context, execPath string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download: status %d", resp.StatusCode)
 	}
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
+	// Stream-hash while writing so we don't need a second full read of
+	// the temp file just to verify. MultiWriter fans the bytes to both
+	// sinks in lockstep.
+	h := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(tmp, h), resp.Body); err != nil {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return err
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(got, expected) {
+		return fmt.Errorf("checksum mismatch: downloaded %s, expected %s", got, expected)
 	}
 	if err := os.Chmod(tmpPath, 0o755); err != nil {
 		return err
@@ -165,6 +191,12 @@ func Apply(ctx context.Context, execPath string) error {
 // given asset name. Goreleaser's default manifest format is one line per
 // asset, "<hex-sha256>  <filename>" — we match against the last field so any
 // future prefix tweak still works.
+//
+// A scanner read error mid-manifest used to be silently dropped (we'd
+// return "", nil — same shape as "no entry"). After the Apply checksum
+// hardening, "no entry" is treated as a fatal mismatch, so quietly turning
+// a network glitch into "manifest claims this asset doesn't exist" would
+// be a confusing user-facing error. Surface the read error instead.
 func fetchHash(ctx context.Context, asset string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", checksumsURL, nil)
 	if err != nil {
@@ -191,6 +223,9 @@ func fetchHash(ctx context.Context, asset string) (string, error) {
 		if fields[len(fields)-1] == asset {
 			return fields[0], nil
 		}
+	}
+	if err := sc.Err(); err != nil {
+		return "", err
 	}
 	return "", nil
 }

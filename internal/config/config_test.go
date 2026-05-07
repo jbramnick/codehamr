@@ -290,6 +290,52 @@ models:
 	}
 }
 
+// TestConfigFilePermissionsAreOwnerOnly is the regression for "hamrpass key
+// is world-readable". Once a user runs /hamrpass <key>, config.yaml stores
+// the bearer token in plaintext — anyone with shell access on the same
+// machine could `cat` it. The fresh-bootstrap and post-Save paths must
+// both write 0o600.
+func TestConfigFilePermissionsAreOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	cfg, _, err := Bootstrap(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, DirName, "config.yaml")
+	st, err := os.Stat(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Mode().Perm(); got != 0o600 {
+		t.Fatalf("fresh config.yaml perms = %v, want 0o600 (key may leak to other local users)", got)
+	}
+
+	// Save() must keep the same permissions; otherwise a /hamrpass write
+	// would silently widen them after the user pasted a key.
+	cfg.Models["hamrpass"].Key = "hp-secret-12345678"
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	st2, err := os.Stat(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st2.Mode().Perm(); got != 0o600 {
+		t.Fatalf("Save() widened config.yaml perms to %v (must stay 0o600)", got)
+	}
+
+	// The .codehamr/ directory itself shouldn't be world-listable either —
+	// even if config.yaml is 0o600, world-listable parents leak the
+	// hamrpass key's existence and let other users probe for it.
+	parentSt, err := os.Stat(filepath.Join(dir, DirName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parentSt.Mode().Perm(); got&0o077 != 0 {
+		t.Fatalf(".codehamr/ dir perms = %v — must not grant any other-user bits", got)
+	}
+}
+
 // TestSetActivePersists: SetActive flips Active and writes config.yaml.
 func TestSetActivePersists(t *testing.T) {
 	dir := t.TempDir()
