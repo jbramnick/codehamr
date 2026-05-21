@@ -797,7 +797,7 @@ func buildSystem(projectDir string) string {
 	return config.DefaultSystemPrompt + "\n\nWorking directory: " + projectDir
 }
 
-// pingBackend issues a short GET to the backend root via cloud.Reachable.
+// pingBackend issues a short GET to baseURL/v1/models via cloud.Reachable.
 // Any HTTP response counts as reachable; transport errors and timeouts mean
 // disconnected. The result carries the URL it was issued against so Update
 // can drop late results that arrive after a /models switch.

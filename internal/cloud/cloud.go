@@ -18,16 +18,27 @@ import (
 	"strconv"
 )
 
-// Reachable does a GET against baseURL with ctx as its deadline. Any HTTP
-// response, even 401 or 404, counts as reachable; only transport errors
-// and timeouts return non-nil. Used by the TUI's live connectivity probe.
+// Reachable does a GET against baseURL/v1/models with ctx as its deadline.
+// Any HTTP response, even 401 or 404, counts as reachable; only transport
+// errors and timeouts return non-nil. Used by the TUI's live connectivity
+// probe for keyless (local) profiles.
+//
+// /v1/models is the OpenAI-standard heartbeat and is universally served by
+// every backend codehamr talks to in keyless mode: Ollama, vLLM, lmstudio,
+// llama.cpp's llama-server, etc. The earlier GET / probe worked against
+// Ollama (200 "Ollama is running") but hung against vLLM, which has no
+// route registered at root and blocks the request behind the running
+// inference loop — yielding a 2 s timeout and a spurious "!" disconnected
+// marker in the status bar. /v1/models is a tiny, route-registered JSON
+// listing on every one of these servers, so the probe completes promptly
+// in every supported configuration.
 //
 // The body is drained before close so the underlying TCP connection can be
 // returned to the pool and reused for the next probe — closing without
 // draining can leak the connection in keep-alive setups (the server keeps
 // it open expecting more reads, the client never makes them).
 func Reachable(ctx context.Context, baseURL string) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/v1/models", nil)
 	if err != nil {
 		return err
 	}

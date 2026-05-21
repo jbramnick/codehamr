@@ -1,9 +1,52 @@
 package cloud
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 )
+
+// TestReachableHitsV1Models pins the heartbeat path. The earlier probe was
+// GET / which Ollama served (200) but vLLM did not (no route → request
+// blocks behind the inference loop, 2 s timeout, spurious "!" in the
+// status bar). /v1/models is the OpenAI-standard listing endpoint and is
+// universally served by every keyless backend we support.
+func TestReachableHitsV1Models(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := Reachable(ctx, srv.URL); err != nil {
+		t.Fatalf("Reachable returned %v, want nil", err)
+	}
+	if gotPath != "/v1/models" {
+		t.Fatalf("Reachable hit %q, want /v1/models", gotPath)
+	}
+}
+
+// TestReachableTreatsNon2xxAsReachable confirms the documented contract:
+// any HTTP response counts as reachable, even 404 / 401. Only transport
+// errors and timeouts (covered by the Go stdlib client error path) mean
+// disconnected.
+func TestReachableTreatsNon2xxAsReachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := Reachable(ctx, srv.URL); err != nil {
+		t.Fatalf("404 must count as reachable, got %v", err)
+	}
+}
 
 func TestFromHeadersMissing(t *testing.T) {
 	if got := FromHeaders(http.Header{}); got != (BudgetStatus{}) {
