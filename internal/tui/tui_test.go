@@ -621,6 +621,40 @@ func TestRedactSlashHidesHamrpassKey(t *testing.T) {
 	}
 }
 
+// TestSubmitRedactsHamrpassKeyFromHistoryAndScroll is the regression for the
+// hamrpass bearer token leaking out of submit. redactSlash already kept it
+// out of the debug log, but submit still echoed the raw `/hamrpass <key>` to
+// scrollback (m.scroll is re-emitted verbatim on every resize), pushed it
+// into the ↑/↓ recall ring, and persisted it to .codehamr/history — a second
+// on-disk copy of the key the 0o600 + symlink defences around config.yaml
+// exist to contain. The key must appear in none of those sinks, and the
+// redacted marker must be what lands in recall + on disk.
+func TestSubmitRedactsHamrpassKeyFromHistoryAndScroll(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	dir := m.cfg.Dir
+	const key = "hp_secret_1234567890abcdef"
+	line := "/hamrpass " + key
+	mm, _ := m.submit(line, line, promptEntry{display: line})
+	final := mm.(Model)
+
+	// Scrollback echo (also the buffer replayed on every resize).
+	if scroll := final.scroll.String(); strings.Contains(scroll, key) {
+		t.Fatalf("scrollback leaked hamrpass key:\n%s", scroll)
+	}
+	if scroll := stripANSI(final.scroll.String()); !strings.Contains(scroll, "/hamrpass <redacted>") {
+		t.Fatalf("scrollback echo should show the redacted marker, got:\n%s", scroll)
+	}
+	// In-memory ↑/↓ recall ring.
+	if len(final.promptHistory) != 1 || final.promptHistory[0].display != "/hamrpass <redacted>" {
+		t.Fatalf("recall ring should carry the redacted marker, got %+v", final.promptHistory)
+	}
+	// On-disk .codehamr/history.
+	disk := loadPromptHistory(dir)
+	if len(disk) != 1 || disk[0].display != "/hamrpass <redacted>" {
+		t.Fatalf("on-disk history should carry the redacted marker, got %+v", disk)
+	}
+}
+
 // TestDebugLogFilePermsAreOwnerOnly: regression for "debug log was
 // 0o644". The file captures every prompt and tool-call payload — bash
 // arguments can carry secrets the user types into a heredoc and the

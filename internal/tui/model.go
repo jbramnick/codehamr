@@ -492,21 +492,36 @@ func (m Model) handleResizeSettle(msg resizeSettleMsg) (tea.Model, tea.Cmd) {
 // swallow 80 lines of pasted log every turn; entry is the history snapshot
 // replayed by ↑/↓ including chip state.
 func (m Model) submit(sendText, echoText string, entry promptEntry) (tea.Model, tea.Cmd) {
+	// Redact secret-bearing slash commands (/hamrpass <key>) before they reach
+	// any sink that persists or replays them: the scrollback echo (kept in
+	// m.scroll and re-emitted verbatim on every resize), the ↑/↓ recall ring,
+	// and the on-disk .codehamr/history file. This is the same redactSlash
+	// hook that already keeps the key out of the debug log — submit was the
+	// one path still leaking the bearer token into a second on-disk copy and
+	// into UI recall, undermining the 0o600 + symlink defences guarding the
+	// key in config.yaml. The raw sendText still flows to runSlash so
+	// activation works. No-op for non-secret input (redactSlash returns its
+	// argument unchanged), so normal prompts echo and recall as before.
+	safeText := redactSlash(sendText)
+	if safeText != sendText {
+		echoText = safeText
+		entry = promptEntry{display: safeText}
+	}
 	// Echo the user's line to scrollback with the same accent ▌ that the
 	// textarea uses — same visual language for "your voice", across live
 	// input and history.
 	m.appendLine(stylePrompt.Render("▌ ") + styleUser.Render(echoText))
 	m.promptHistory = append(m.promptHistory, entry)
 	m.histIdx = -1
-	// Persist the expanded prompt so ↑ still finds it after a restart.
+	// Persist the (redacted) prompt so ↑ still finds it after a restart.
 	// Errors are swallowed: a transient write failure is not worth
 	// derailing the user's submit, and a permanent one (e.g. read-only
 	// .codehamr/) will keep failing on every prompt — surfacing that here
 	// would just be noise.
-	_ = appendPromptHistory(m.cfg.Dir, sendText)
+	_ = appendPromptHistory(m.cfg.Dir, safeText)
 
 	if strings.HasPrefix(sendText, "/") {
-		dbgWritef("user_slash", "%s", redactSlash(sendText))
+		dbgWritef("user_slash", "%s", safeText)
 		return m.runSlash(sendText)
 	}
 	// Every user message starts a fresh GYSD sub-loop: the previous
