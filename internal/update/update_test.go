@@ -154,6 +154,44 @@ func TestApplyRestoresBinaryWhenPromoteFails(t *testing.T) {
 	}
 }
 
+// TestApplyReportsRestoreFailure covers the doubly-bad path: the promote
+// rename fails AND the restore of the moved-aside binary also fails. The
+// old code discarded the restore error via `_` and surfaced only the
+// promote error, hiding from the caller that execPath is now empty. Apply
+// must surface the restore failure so the message reflects reality ("binary
+// may be missing"). The restore is forced to fail by occupying execPath
+// with a directory inside the promoteRename seam, so the subsequent
+// os.Rename(oldPath, execPath) hits EISDIR.
+func TestApplyReportsRestoreFailure(t *testing.T) {
+	asset := platformAsset(t)
+	body := []byte("verified new binary\n")
+	r := newFakeRelease(t, asset, body, hashOf(body))
+	withReleaseURLs(t, r.srv.URL)
+
+	tmpDir := t.TempDir()
+	exec := filepath.Join(tmpDir, "codehamr")
+	if err := os.WriteFile(exec, []byte("the original running binary\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := promoteRename
+	// Fail the promote, and occupy the now-vacant execPath with a directory
+	// so the restore rename(oldPath, execPath) can't succeed either.
+	promoteRename = func(_, to string) error {
+		_ = os.Mkdir(to, 0o755)
+		return fmt.Errorf("simulated promote failure")
+	}
+	t.Cleanup(func() { promoteRename = orig })
+
+	err := Apply(context.Background(), exec)
+	if err == nil {
+		t.Fatal("Apply must surface the failure")
+	}
+	if !strings.Contains(err.Error(), "restore") {
+		t.Fatalf("error must name the restore failure (binary may be missing), got: %v", err)
+	}
+}
+
 // TestApplyAcceptsMatchingChecksum: positive case — a download whose hash
 // equals the manifest entry promotes the binary into place.
 func TestApplyAcceptsMatchingChecksum(t *testing.T) {

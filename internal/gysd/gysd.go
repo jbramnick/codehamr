@@ -252,7 +252,10 @@ func (s *Session) HandleDone(summary, evidence string) Result {
 	if strings.TrimSpace(summary) == "" {
 		return Result{ToolPayload: "done rejected: summary empty."}
 	}
-	if len(evidence) < MinEvidenceLen {
+	// Count runes, not bytes: the schema and CLAUDE.md both promise ">=20
+	// chars", and a byte count would let a few multi-byte UTF-8 glyphs (CJK,
+	// emoji) clear the gate with far fewer characters than the contract says.
+	if utf8.RuneCountInString(evidence) < MinEvidenceLen {
 		return Result{ToolPayload: fmt.Sprintf(
 			"done rejected: evidence must be >= %d chars verbatim from a green verify.",
 			MinEvidenceLen)}
@@ -273,7 +276,8 @@ func (s *Session) HandleAsk(question string) Result {
 	s.LoopToolThisTurn = true
 	s.MissingStreak = 0
 	q := strings.TrimSpace(question)
-	if len(q) < MinQuestionLen {
+	// Rune count, matching the ">=8 chars" contract — see HandleDone above.
+	if utf8.RuneCountInString(q) < MinQuestionLen {
 		return Result{ToolPayload: fmt.Sprintf(
 			"ask rejected: question too short (>= %d chars after trim).",
 			MinQuestionLen)}

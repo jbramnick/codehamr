@@ -649,3 +649,40 @@ func TestURLOverrideDoesNotPersist(t *testing.T) {
 		t.Fatalf("URLOverride round-tripped through YAML: %q", reloaded.URLOverride)
 	}
 }
+
+// TestSaveTightensPreexistingLoosePerms is the regression for the upgrade
+// path the fresh-bootstrap test misses: a config.yaml left behind by an
+// older world-readable-default codehamr (or a hand-edit) starts at 0o644.
+// os.WriteFile preserves an existing file's mode, so Save() would rewrite
+// the bytes — including a freshly-pasted hamrpass bearer token — while
+// leaving the file world-readable. Save must tighten perms to 0o600 even
+// for a pre-existing loose file.
+func TestSaveTightensPreexistingLoosePerms(t *testing.T) {
+	dir := t.TempDir()
+	cdir := filepath.Join(dir, DirName)
+	if err := os.MkdirAll(cdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cdir, "config.yaml")
+	// Simulate the world-readable file an older codehamr would have written.
+	loose := []byte("active: local\nmodels:\n  local:\n    llm: m\n    url: http://x\n    key: \"\"\n    context_size: 1\n")
+	if err := os.WriteFile(cfgPath, loose, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Bootstrap(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A /hamrpass write lands the bearer token in this very file.
+	cfg.EnsureHamrpass().Key = "hp-secret-1234567890abcdef"
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := st.Mode().Perm(); got != 0o600 {
+		t.Fatalf("Save() must tighten a pre-existing 0o644 config.yaml to 0o600, got %v — hamrpass key stays world-readable across an upgrade", got)
+	}
+}

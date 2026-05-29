@@ -225,10 +225,15 @@ func Apply(ctx context.Context, execPath string) error {
 		return err
 	}
 	if err := promoteRename(tmpPath, execPath); err != nil {
-		// Promote attempt failed after we already moved the running
-		// binary aside — restore it so the caller still has something
-		// to exec, then surface the error.
-		_ = os.Rename(oldPath, execPath)
+		// Promote attempt failed after we already moved the running binary
+		// aside — restore it so the caller still has something to exec. If
+		// that restore ALSO fails the user is left with no binary at
+		// execPath, which is the one outcome worth shouting about; surface
+		// both errors rather than masking the critical one behind the
+		// promote message.
+		if restoreErr := os.Rename(oldPath, execPath); restoreErr != nil {
+			return fmt.Errorf("promote failed (%w); restore of %s also failed, binary may be missing: %v", err, execPath, restoreErr)
+		}
 		return err
 	}
 	return nil

@@ -319,6 +319,51 @@ func TestDoneResetsSession(t *testing.T) {
 	}
 }
 
+// TestDoneEvidenceLengthCountsRunesNotBytes pins the documented contract:
+// the schema and CLAUDE.md both say evidence must be ">=20 chars", but a
+// byte-count check would let multi-byte UTF-8 (CJK, emoji) clear the gate
+// with far fewer characters. 8 CJK chars = 24 bytes passes a len() check
+// yet is well under 20 characters, so the rejection must be the length one.
+func TestDoneEvidenceLengthCountsRunesNotBytes(t *testing.T) {
+	s := newSession(t)
+	short := "中文证据串不足够" // 8 runes, 24 bytes
+	if utf8.RuneCountInString(short) >= MinEvidenceLen {
+		t.Fatalf("fixture must be < %d runes, got %d", MinEvidenceLen, utf8.RuneCountInString(short))
+	}
+	if len(short) < MinEvidenceLen {
+		t.Fatalf("fixture must be >= %d bytes to exercise the byte/rune gap, got %d", MinEvidenceLen, len(short))
+	}
+	r := s.HandleDone("done", short)
+	if r.EndLoop {
+		t.Fatal("short-char evidence must not end the loop")
+	}
+	// The length rejection mentions "chars"; the no-green-match rejection
+	// does not — so this distinguishes a rune-count check from a byte one.
+	if !strings.Contains(r.ToolPayload, "chars") {
+		t.Fatalf("rejection should be the length check (>=20 chars), got: %q", r.ToolPayload)
+	}
+}
+
+// TestAskQuestionLengthCountsRunesNotBytes is the HandleAsk twin: ">=8 chars"
+// must count runes, not bytes, or a 3-char CJK question (9 bytes) slips past.
+func TestAskQuestionLengthCountsRunesNotBytes(t *testing.T) {
+	s := newSession(t)
+	short := "太短了" // 3 runes, 9 bytes
+	if utf8.RuneCountInString(short) >= MinQuestionLen {
+		t.Fatalf("fixture must be < %d runes, got %d", MinQuestionLen, utf8.RuneCountInString(short))
+	}
+	if len(short) < MinQuestionLen {
+		t.Fatalf("fixture must be >= %d bytes to exercise the byte/rune gap, got %d", MinQuestionLen, len(short))
+	}
+	r := s.HandleAsk(short)
+	if r.Yield {
+		t.Fatal("short-char question must reject, not yield")
+	}
+	if !strings.Contains(r.ToolPayload, "too short") {
+		t.Fatalf("wrong rejection: %q", r.ToolPayload)
+	}
+}
+
 func TestAskQuestionTooShort(t *testing.T) {
 	s := newSession(t)
 	r := s.HandleAsk("ok?")

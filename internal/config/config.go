@@ -264,7 +264,15 @@ func writeYAML(path string, v any) error {
 	// activates a profile. World-readable was the prior default and made
 	// the bearer token visible to every local account on the machine.
 	// The user owning the project is the only legitimate reader.
-	return os.WriteFile(path, append(header, b...), 0o600)
+	if err := os.WriteFile(path, append(header, b...), 0o600); err != nil {
+		return err
+	}
+	// os.WriteFile only applies the 0o600 mode when it creates the file; for
+	// an existing config.yaml it preserves the old mode. A file left behind
+	// by the world-readable prior default (or a hand-edit) would otherwise
+	// keep 0o644 even as Save rewrites the freshly-pasted key into it, so
+	// Chmod unconditionally to close the upgrade-path leak.
+	return os.Chmod(path, 0o600)
 }
 
 // ActiveProfile returns the currently-selected profile. Bootstrap guarantees
