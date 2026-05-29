@@ -1,6 +1,6 @@
 # Procedural Galaxy Explorer — Single-File Build
 
-Build a single self-contained `galaxy-250.html` file that opens directly in a modern browser and renders an explorable procedural galaxy in WebGL. No build step, no external assets, no images, no servers — just one HTML file with inline CSS, an ES-module import map for Three.js loaded from a CDN, and inline JavaScript. Target around 2000–2500 lines.
+Build a single self-contained `galaxy.html` file that opens directly in a modern browser and renders an explorable procedural galaxy in WebGL. No build step, no external assets, no images, no servers — just one HTML file with inline CSS, an ES-module import map for Three.js loaded from a CDN, and inline JavaScript. Target around 2000–2500 lines.
 
 ## High-level vision
 
@@ -12,7 +12,7 @@ The reference aesthetic is something between *Elite Dangerous* exterior shots, *
 
 ## Tech stack and constraints
 
-- One file, `galaxy-250.html`. Inline CSS and JS only.
+- One file, `galaxy.html`. Inline CSS and JS only.
 - Three.js loaded via `<script type="importmap">` pointing at the unpkg CDN.
 - Use the postprocessing addons (EffectComposer, RenderPass, UnrealBloomPass, ShaderPass) for the look.
 - Logarithmic depth buffer — you are mixing meter-scale ships with hundreds-of-thousands-of-units cosmic distances, the near/far split is huge.
@@ -242,4 +242,4 @@ Open the file, click start, then:
 - Flying for several seconds in any direction should keep revealing new stars without the universe feeling empty or repeating.
 - Coming back to the same coordinates later should show the same stars in the same places — the universe is deterministic.
 
-Deliver the full galaxy-250.html file. No commentary, no markdown fences around it.
+Deliver the full galaxy.html file. No commentary, no markdown fences around it.
