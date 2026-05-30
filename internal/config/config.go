@@ -21,12 +21,15 @@ var DefaultSystemPrompt string
 
 const DirName = ".codehamr"
 
-// defaultContextSize is the floor Bootstrap coerces bogus context_size to,
-// matching the local profile so a config missing the field behaves like a
-// fresh one. 128k tokens fits the seeded qwen3.6:27b in 32GB; the model
-// allows 256k native but the extra KV cache would blow the budget. Users
-// with bigger machines lift this per-profile.
-const defaultContextSize = 131072
+// defaultContextSize is the local profile's packing budget and the floor
+// Bootstrap coerces a bogus/missing context_size to. It must match what a stock
+// local server actually honors, NOT the model's theoretical max: Ollama's /v1
+// shim reports no X-Context-Window, so codehamr packs to this value blind — set
+// it too high and the server silently front-truncates the prompt, dropping the
+// embedded system prompt and early tool results with no error. 32k is the safe
+// stock-Ollama tier and the seeded qwen3.6:27b's native window. Users who raise
+// their server's num_ctx (OLLAMA_CONTEXT_LENGTH; see README) lift this to match.
+const defaultContextSize = 32768
 
 // cloudProfileNames are profiles whose context_size the server sets via the
 // X-Context-Window header. We leave their on-disk context_size empty:

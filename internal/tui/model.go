@@ -156,6 +156,14 @@ type Model struct {
 	failKey     string
 	failStreak  int
 
+	// Runaway-iteration nudge — sibling to the failure nudge. A 30B model can
+	// loop on plausible *non-failing* calls (re-read, re-grep, re-list) forever;
+	// the failure streak only catches repeated *failures*, so that hole stayed
+	// open. toolRounds counts tool calls dispatched this turn (reset in endTurn);
+	// at maxToolRounds one soft system note asks the model to self-assess. A
+	// nudge, never a hard yield — same contract as maybeFailureNudge.
+	toolRounds int
+
 	// liveContextSize is the per-profile, runtime-only context window the
 	// server reports via X-Context-Window. Seeded by Probe at activation and
 	// refreshed on every chat EventDone, so a server-side change applies on the
@@ -219,7 +227,7 @@ func (m *Model) activeContextSize() int {
 // defaultPackFallback is the conservative window used until the server reports
 // a real value. Matches config.defaultContextSize so cloud profiles behave like
 // a fresh local one until X-Context-Window arrives on the next response.
-const defaultPackFallback = 131072
+const defaultPackFallback = 32768
 
 // resizeSettleDelay debounces width-resize bursts: longer than typical drag
 // SIGWINCH cadence (10–50ms) so a continuous drag collapses to one settle,
@@ -374,10 +382,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.pending) > 0 {
 			return m.dispatchNextTool()
 		}
-		// Queue drained — only now is it safe to inject the failure nudge. A
+		// Queue drained — only now is it safe to inject a system nudge. A
 		// system message wedged between assistant.tool_calls and its tool
 		// results would break that pairing and 400 the next request.
 		m.maybeFailureNudge()
+		m.maybeRunawayNudge()
 		m.phase = phaseThinking
 		return m, m.startChat()
 
@@ -547,6 +556,7 @@ func (m *Model) endTurn() {
 	m.cancel = nil
 	m.turnCtx = nil
 	m.pending = nil
+	m.toolRounds = 0
 }
 
 func (m *Model) buildMessages() []chmctx.Message {
@@ -713,9 +723,44 @@ func (m Model) handleStreamClosed() (tea.Model, tea.Cmd) {
 	if len(m.pending) > 0 {
 		return m.dispatchNextTool()
 	}
+	// The turn is ending with no tool calls. If the model meant to call a tool
+	// but its server's parser leaked the raw call into the text instead, warn
+	// the user — the fix is server-side, so re-prompting can't help.
+	if w := toolCallLeakWarning(m.history); w != "" {
+		m.appendLine(w)
+	}
 	m.finalizeTurn()
 	m.endTurn()
 	return m, nil
+}
+
+// toolCallLeakWarning returns a user-facing diagnostic when the newest assistant
+// message carries a tool-call opener (`<tool_call>`) in its text instead of
+// structured tool_calls — the dominant local-hosting failure: a
+// misconfigured/missing server parser leaks the call as content with
+// finish_reason "stop", so the turn ends silently with the tool intent stranded.
+// The bare `<tool_call>` opener covers both shapes the target servers emit: the
+// Qwen3-Coder XML body (`<function=…`) and the general Qwen3-dense JSON body
+// (`{"name":…`) — gating on the literal tag alone catches both while staying
+// specific enough that ordinary prose can't trip it. A message that carried a
+// real structured call never leaked, even if its prose quotes the tag, so a
+// non-empty ToolCalls short-circuits to clean. codehamr stays wire-only (it does
+// not parse or run the leaked call); it points the user at the server-side fix.
+// Empty string when there is nothing to warn.
+func toolCallLeakWarning(history []chmctx.Message) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role != chmctx.RoleAssistant {
+			continue
+		}
+		if len(history[i].ToolCalls) > 0 {
+			return "" // it called a tool properly — the prose tag is incidental
+		}
+		if strings.Contains(history[i].Content, "<tool_call>") {
+			return styleError.Render("⚠ a tool call leaked into the reply as text instead of running — your model server's tool-call parser is misconfigured. Fix it server-side: vLLM `--enable-auto-tool-choice --tool-call-parser qwen3_xml` (or `qwen3_coder`); llama.cpp `--jinja` on a current build. If you enabled thinking, the reasoning parser can swallow the call instead — add vLLM `--reasoning-parser qwen3`, or turn thinking off for tool turns.")
+		}
+		return "" // newest assistant message is clean
+	}
+	return ""
 }
 
 // dispatchNextTool pops the next pending tool call and runs it. Every tool
@@ -727,6 +772,7 @@ func (m Model) dispatchNextTool() (tea.Model, tea.Cmd) {
 	m.pending = m.pending[1:]
 	m.appendLine(styleDim.Render(tools.InlineStatus(call)))
 	m.lastToolKey = toolTargetKey(call)
+	m.toolRounds++
 	m.phase = phaseRunning
 	return m, runToolCall(m.turnCtx, call)
 }
@@ -808,6 +854,29 @@ func (m *Model) maybeFailureNudge() {
 			m.failStreak),
 	})
 	m.failKey, m.failStreak = "", 0
+}
+
+// maxToolRounds caps tool calls per turn before the runaway nudge fires. Set
+// high on purpose: an honest large task (a wide refactor, a long test-fix loop)
+// can legitimately run dozens of calls, so this only trips on a genuine runaway.
+const maxToolRounds = 120
+
+// maybeRunawayNudge appends one soft system note when a turn crosses
+// maxToolRounds tool calls without finishing. Equality (not >=) so it fires
+// exactly once per turn; toolRounds keeps climbing afterward. Framed as a
+// self-check, not a stop order — telling a 30B to "stop" mid-task is the
+// premature-completion failure we otherwise fight, so the model decides whether
+// it is still converging.
+func (m *Model) maybeRunawayNudge() {
+	if m.toolRounds != maxToolRounds {
+		return
+	}
+	m.history = append(m.history, chmctx.Message{
+		Role: chmctx.RoleSystem,
+		Content: fmt.Sprintf(
+			"Note: %d tool calls so far this turn without finishing. If you're still making real progress, keep going. If you're repeating steps, stuck, or unsure you're converging, stop and tell the user where things stand and what's blocking you.",
+			m.toolRounds),
+	})
 }
 
 // cursorOnFirstLine: true when ↑ should walk prompt history instead of moving

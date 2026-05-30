@@ -1678,6 +1678,98 @@ func TestClearResetsFailureStreak(t *testing.T) {
 	}
 }
 
+// countSystem counts RoleSystem messages — the shape every nudge appends.
+func countSystem(history []chmctx.Message) int {
+	n := 0
+	for _, msg := range history {
+		if msg.Role == chmctx.RoleSystem {
+			n++
+		}
+	}
+	return n
+}
+
+// TestRunawayNudgeFiresOnceAtMaxToolRounds: the per-turn tool-call counter trips
+// exactly one soft system note when it reaches maxToolRounds, and never before
+// or after — equality, not >=, so a long turn can't double-fire it.
+func TestRunawayNudgeFiresOnceAtMaxToolRounds(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+
+	m.toolRounds = maxToolRounds - 1
+	m.maybeRunawayNudge()
+	if n := countSystem(m.history); n != 0 {
+		t.Fatalf("below the cap must not nudge, got %d system notes", n)
+	}
+
+	m.toolRounds = maxToolRounds
+	m.maybeRunawayNudge()
+	if n := countSystem(m.history); n != 1 {
+		t.Fatalf("at the cap expected one system nudge, got %d:\n%+v", n, m.history)
+	}
+	last := m.history[len(m.history)-1]
+	if !strings.Contains(last.Content, fmt.Sprintf("%d tool calls", maxToolRounds)) {
+		t.Fatalf("runaway nudge should name the count: %q", last.Content)
+	}
+
+	m.toolRounds = maxToolRounds + 1
+	m.maybeRunawayNudge()
+	if n := countSystem(m.history); n != 1 {
+		t.Fatalf("past the cap must not re-fire, got %d system notes", n)
+	}
+}
+
+// TestEndTurnResetsToolRounds: the runaway counter is per-turn, so endTurn must
+// zero it or the next turn inherits a head start toward the cap.
+func TestEndTurnResetsToolRounds(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	m.installTurnContext()
+	m.toolRounds = 42
+	m.endTurn()
+	if m.toolRounds != 0 {
+		t.Fatalf("endTurn must reset toolRounds, got %d", m.toolRounds)
+	}
+}
+
+// TestToolCallLeakWarningDetectsStrandedXML: a turn ending with Qwen3-Coder
+// tool-call XML stranded in the newest assistant message warns the user; clean
+// text doesn't, and only the NEWEST assistant message is inspected.
+func TestToolCallLeakWarningDetectsStrandedXML(t *testing.T) {
+	// Qwen3-Coder XML body.
+	coderLeak := "Let me search.\n<tool_call>\n<function=bash>\n<parameter=cmd>ls</parameter>\n</function>\n</tool_call>"
+	// General Qwen3-dense JSON body — the target model class, NO `<function=`.
+	denseLeak := "Let me search.\n<tool_call>\n{\"name\": \"bash\", \"arguments\": {\"cmd\": \"ls\"}}\n</tool_call>"
+	clean := "Done — built and tested, all green."
+
+	for name, leak := range map[string]string{"coder-xml": coderLeak, "dense-json": denseLeak} {
+		if w := toolCallLeakWarning([]chmctx.Message{{Role: chmctx.RoleAssistant, Content: leak}}); w == "" {
+			t.Fatalf("%s: leaked tool call must produce a warning", name)
+		}
+	}
+	if w := toolCallLeakWarning([]chmctx.Message{{Role: chmctx.RoleAssistant, Content: clean}}); w != "" {
+		t.Fatalf("clean reply must not warn, got %q", w)
+	}
+	// A message that carried a real structured tool call never leaked, even if
+	// its prose quotes the `<tool_call>` tag — the ToolCalls gate keeps it clean.
+	withCall := chmctx.Message{
+		Role:      chmctx.RoleAssistant,
+		Content:   "Running the build via a <tool_call> now.",
+		ToolCalls: []chmctx.ToolCall{{ID: "1", Name: "bash", Arguments: map[string]any{"cmd": "go build ./..."}}},
+	}
+	if w := toolCallLeakWarning([]chmctx.Message{withCall}); w != "" {
+		t.Fatalf("a turn with a structured tool call must not warn on incidental prose, got %q", w)
+	}
+	// An old leak followed by a clean reply must stay silent: only the newest
+	// assistant message is the one that just ended the turn.
+	hist := []chmctx.Message{
+		{Role: chmctx.RoleAssistant, Content: coderLeak},
+		{Role: chmctx.RoleUser, Content: "go on"},
+		{Role: chmctx.RoleAssistant, Content: clean},
+	}
+	if w := toolCallLeakWarning(hist); w != "" {
+		t.Fatalf("only the newest assistant message should be checked, got %q", w)
+	}
+}
+
 // TestStatusBarShowsSessionTokens: once the counter is non-zero it appears
 // in the status bar; at zero the bar stays quiet.
 func TestStatusBarShowsSessionTokens(t *testing.T) {
