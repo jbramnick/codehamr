@@ -361,6 +361,9 @@ func (c *Client) doPost(parent context.Context, body chatRequest) (*http.Respons
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case 401:
+		// Drain before the deferred Close so the keep-alive connection returns
+		// to the pool instead of being discarded — same as the 402/default arms.
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil, cloud.BudgetStatus{}, nil, cloud.ErrUnauthorized
 	case 402:
 		// Pass depleted. Body ignored: the status code is the whole signal,

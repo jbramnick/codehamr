@@ -375,6 +375,41 @@ func TestChat401(t *testing.T) {
 	}
 }
 
+// TestChat401DrainsBodyForConnReuse: a 401 carrying a body must have that body
+// drained before close, or Go's transport discards the TCP connection instead
+// of returning it to the keep-alive pool. With the same client issuing two
+// sequential 401s, a drained body reuses one connection (one RemoteAddr); an
+// undrained one forces a fresh connection on the second request (two). The 402
+// and default error branches already drain — this pins the 401 branch to match.
+func TestChat401DrainsBodyForConnReuse(t *testing.T) {
+	var mu sync.Mutex
+	conns := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		conns[r.RemoteAddr] = true
+		mu.Unlock()
+		w.WriteHeader(http.StatusUnauthorized)
+		// Non-empty body: an empty 401 is reusable regardless and would hide the
+		// regression. A real backend's 401 carries an error JSON like this.
+		fmt.Fprint(w, `{"error":{"message":"invalid api key"}}`)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "m", "")
+	for i := 0; i < 2; i++ {
+		evs := collect(c.Chat(context.Background(), nil, nil))
+		if len(evs) != 1 || !errors.Is(evs[0].Err, cloud.ErrUnauthorized) {
+			t.Fatalf("request %d: want ErrUnauthorized, got %+v", i, evs)
+		}
+	}
+	mu.Lock()
+	n := len(conns)
+	mu.Unlock()
+	if n != 1 {
+		t.Fatalf("401 body not drained: server saw %d connections across 2 sequential requests, want 1 (keep-alive reuse defeated)", n)
+	}
+}
+
 // TestChat402: budget exhaustion surfaces as a typed error with the snapshot
 // reporting zero remaining, so the UI paints the depleted state immediately.
 func TestChat402(t *testing.T) {
