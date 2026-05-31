@@ -51,12 +51,12 @@ func main() {
 	maybeSelfUpdate()
 
 	cwd := mustCwd()
-	cfg, created, err := config.Bootstrap(cwd)
+	// created is ignored: any first-run notice printed here is wiped milliseconds
+	// later by the unconditional screen+scrollback clear below, before the TUI
+	// draws — so there's nothing to announce.
+	cfg, _, err := config.Bootstrap(cwd)
 	if err != nil {
 		log.Fatalf("codehamr: %v", err)
-	}
-	if created {
-		fmt.Println(".codehamr/ created")
 	}
 	applyEnvOverrides(cfg)
 

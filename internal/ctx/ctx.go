@@ -148,7 +148,15 @@ func Pack(history []Message, budget int) PackResult {
 	// group whole, over budget if need be — the same deliberately-over-budget
 	// guarantee a newest user message already gets.
 	if len(kept) == 0 {
+		// Recover the group over budget, then re-run the same two passes the
+		// normal path uses: a partially-answered parallel set (owner issued c1,c2
+		// but only c1 came back before an abort) would otherwise reach the wire as
+		// a dangling assistant and 400 every backend. Fully-answered groups pass
+		// through untouched; an unpairable partial empties to nothing — a
+		// well-formed system-only request, not a 400.
 		kept = newestToolGroup(history)
+		kept = dropDanglingToolCalls(kept)
+		kept = dropOrphanTools(kept)
 	}
 	return PackResult{
 		Messages: kept,

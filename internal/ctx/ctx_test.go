@@ -234,6 +234,32 @@ func TestPackKeepsNewestParallelToolGroupOverBudget(t *testing.T) {
 	}
 }
 
+// TestPackRecoveryDropsPartialParallelGroup: the empty-recovery path (newest is
+// a tool result whose owner fell past a tight budget) must not resurrect a
+// partially-answered parallel group as a dangling assistant. owner issued c1,c2
+// but only c1 came back; newestToolGroup recovers [assistant(c1,c2), tool(c1)],
+// which must then be stripped to nothing rather than reaching the wire and 400ing.
+func TestPackRecoveryDropsPartialParallelGroup(t *testing.T) {
+	bigArgs := strings.Repeat("y", 4*5000) // owner far over the tight budget below
+	history := []Message{
+		{Role: RoleUser, Content: "do two things"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{
+			{ID: "c1", Name: "bash", Arguments: map[string]any{"cmd": bigArgs}},
+			{ID: "c2", Name: "bash"},
+		}},
+		{Role: RoleTool, ToolCallID: "c1", Content: "out1"}, // c2 result never arrived
+	}
+	r := Pack(history, 300) // forces the budget walk + drops to empty, then recovery
+	for _, m := range r.Messages {
+		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
+			t.Fatalf("dangling partial-parallel assistant reached the wire: %+v", r.Messages)
+		}
+		if m.Role == RoleTool {
+			t.Fatalf("orphaned tool survived after its assistant was dropped: %+v", r.Messages)
+		}
+	}
+}
+
 // TestPackDropsDanglingAssistantToolCalls: a turn cancelled mid-tool leaves an
 // assistant.tool_calls in history with no answering tool message (the TUI
 // appended it on round close, then endTurn dropped the pending call on Ctrl+C).

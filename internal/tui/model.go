@@ -736,9 +736,8 @@ func (m *Model) abortTurn(banner string) {
 	if banner != "" {
 		m.appendLine(banner)
 	}
-	m.pending = nil
 	m.finalizeTurn()
-	m.endTurn()
+	m.endTurn() // drops pending tool calls along with the rest of the turn state
 }
 
 func (m *Model) finalizeTurn() {
