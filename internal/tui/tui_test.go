@@ -1819,6 +1819,174 @@ func TestEndTurnResetsToolRounds(t *testing.T) {
 	}
 }
 
+// TestVerifyNudgeFiresOnceAtMinRounds: the finish re-grounding nudge trips one
+// soft system note only once a turn has done real work (toolRounds >=
+// verifyNudgeMinRounds), and never below it; the latch keeps it to once per turn.
+func TestVerifyNudgeFiresOnceAtMinRounds(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+
+	m.toolRounds = verifyNudgeMinRounds - 1
+	if m.maybeVerifyNudge() {
+		t.Fatal("below the min-rounds gate must not nudge")
+	}
+	if n := countSystem(m.history); n != 0 {
+		t.Fatalf("a trivial turn must not be re-grounded, got %d system notes", n)
+	}
+
+	m.toolRounds = verifyNudgeMinRounds
+	if !m.maybeVerifyNudge() {
+		t.Fatal("at the min-rounds gate the nudge must fire and report it nudged")
+	}
+	if n := countSystem(m.history); n != 1 {
+		t.Fatalf("at the gate expected one re-grounding note, got %d:\n%+v", n, m.history)
+	}
+	last := m.history[len(m.history)-1]
+	if !strings.Contains(last.Content, "unverified") || !strings.Contains(last.Content, "acceptance criteria") {
+		t.Fatalf("re-grounding note must push honest verification against the original request: %q", last.Content)
+	}
+
+	// Latched: a later drain in the same turn must not re-fire.
+	m.toolRounds = verifyNudgeMinRounds + 50
+	if m.maybeVerifyNudge() {
+		t.Fatal("latch must prevent a second re-grounding nudge in the same turn")
+	}
+	if n := countSystem(m.history); n != 1 {
+		t.Fatalf("latch must hold at one note, got %d", n)
+	}
+}
+
+// TestVerifyNudgeRePromptsSubstantialCleanFinish: a substantial turn ending with a
+// clean, non-empty summary must be re-prompted once (phase back to thinking, a
+// chat cmd returned, the re-grounding note appended) rather than finalized — so
+// the model verifies before handing back. This is the false-green-finish guard.
+func TestVerifyNudgeRePromptsSubstantialCleanFinish(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	m.installTurnContext()
+	m.phase = phaseStreaming
+	m.toolRounds = verifyNudgeMinRounds
+	m.history = []chmctx.Message{
+		{Role: chmctx.RoleUser, Content: "build galaxy.html"},
+		{Role: chmctx.RoleAssistant, Content: "Done — built galaxy.html with all features."},
+	}
+	out, cmd := m.handleStreamClosed()
+	mm := out.(Model)
+	if cmd == nil {
+		t.Fatal("a substantial clean finish must re-prompt (non-nil chat cmd)")
+	}
+	if mm.phase != phaseThinking {
+		t.Fatalf("re-prompt must leave phase thinking, got %v", mm.phase)
+	}
+	if !mm.verifyNudged {
+		t.Fatal("verifyNudged must latch after the re-grounding nudge fires")
+	}
+	if n := countSystem(mm.history); n != 1 {
+		t.Fatalf("expected exactly one re-grounding system note, got %d:\n%+v", n, mm.history)
+	}
+}
+
+// TestVerifyNudgeSkipsTrivialTurn: a turn that did little work (toolRounds below
+// the gate) must finish normally — finalized, no re-prompt, no system note — so
+// quick answers and one-line edits aren't nagged.
+func TestVerifyNudgeSkipsTrivialTurn(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	m.installTurnContext()
+	m.phase = phaseStreaming
+	m.toolRounds = verifyNudgeMinRounds - 1
+	m.history = []chmctx.Message{
+		{Role: chmctx.RoleUser, Content: "what does this function do?"},
+		{Role: chmctx.RoleAssistant, Content: "It hashes the input."},
+	}
+	out, cmd := m.handleStreamClosed()
+	mm := out.(Model)
+	if cmd != nil {
+		t.Fatal("a trivial turn must finish, not re-prompt")
+	}
+	if mm.phase != phaseIdle {
+		t.Fatalf("a finished turn must be idle, got %v", mm.phase)
+	}
+	if n := countSystem(mm.history); n != 0 {
+		t.Fatalf("a trivial turn must not be re-grounded, got %d system notes", n)
+	}
+}
+
+// TestVerifyNudgeYieldsToEmptyReply: an empty newest assistant message is the
+// empty-reply nudge's domain even on a substantial turn — the verify nudge must
+// not pre-empt it (its note re-grounds a summary that doesn't exist).
+func TestVerifyNudgeYieldsToEmptyReply(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	m.installTurnContext()
+	m.phase = phaseStreaming
+	m.toolRounds = verifyNudgeMinRounds + 10
+	m.history = []chmctx.Message{
+		{Role: chmctx.RoleUser, Content: "build it"},
+		{Role: chmctx.RoleAssistant, Content: ""}, // empty: stopped mid-task
+	}
+	out, _ := m.handleStreamClosed()
+	mm := out.(Model)
+	if mm.verifyNudged {
+		t.Fatal("an empty reply belongs to the empty-reply nudge; verify nudge must not fire")
+	}
+	last := mm.history[len(mm.history)-1]
+	if last.Role != chmctx.RoleSystem || !strings.Contains(last.Content, "no reply and no tool call") {
+		t.Fatalf("expected the empty-reply nudge to own this finish, got %+v", last)
+	}
+}
+
+// TestVerifyNudgeEndToEndRePromptsThenFinishes drives a full turn that does real
+// work (8 bash rounds) then "finishes" with a confident summary. The finish
+// re-grounding nudge must inject one note and re-prompt exactly once, and the
+// turn must then complete idle — the false-green-finish path, end to end.
+func TestVerifyNudgeEndToEndRePromptsThenFinishes(t *testing.T) {
+	var round int
+	handler := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		round++
+		if round <= verifyNudgeMinRounds {
+			// A real tool call so toolRounds climbs to the gate.
+			fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c%d\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"cmd\\\":\\\"echo step\\\"}\"}}]}}]}\n\n", round)
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"completion_tokens\":5}}\n\n")
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			return
+		}
+		// A confident, toolless summary — what the galaxy runs shipped.
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Done — galaxy.html built with all features.\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"completion_tokens\":6}}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}
+
+	m := newTestModel(t, handler)
+	final := drainFinal(t, m, "build galaxy.html")
+
+	// 8 tool rounds + a summary that gets re-prompted + the final summary = 10.
+	if round != verifyNudgeMinRounds+2 {
+		t.Fatalf("substantial finish must re-prompt exactly once (want %d requests, got %d)", verifyNudgeMinRounds+2, round)
+	}
+	var nudges int
+	for _, msg := range final.history {
+		if msg.Role == chmctx.RoleSystem && strings.Contains(msg.Content, "acceptance criteria") {
+			nudges++
+		}
+	}
+	if nudges != 1 {
+		t.Fatalf("expected exactly one finish re-grounding note in history, got %d", nudges)
+	}
+	if final.phase != phaseIdle {
+		t.Fatalf("turn must end idle after the re-grounded finish, phase=%v", final.phase)
+	}
+}
+
+// TestEndTurnResetsVerifyNudged: the latch is per-turn, so endTurn must clear it
+// or a later turn never re-grounds.
+func TestEndTurnResetsVerifyNudged(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	m.installTurnContext()
+	m.verifyNudged = true
+	m.endTurn()
+	if m.verifyNudged {
+		t.Fatal("endTurn must reset verifyNudged")
+	}
+}
+
 // TestToolCallLeakWarningDetectsStrandedXML: a turn ending with Qwen3-Coder
 // tool-call XML stranded in the newest assistant message warns the user; clean
 // text doesn't, and only the NEWEST assistant message is inspected.

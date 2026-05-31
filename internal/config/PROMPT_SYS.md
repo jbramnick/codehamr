@@ -33,7 +33,7 @@ After a meaningful change, check it with whatever actually proves it works, then
 Two rules keep checks honest:
 
 - **A check must fail when the thing is broken.** A script that prints a status and exits 0 without asserting on it (e.g. printing `status: 000` and returning success) is a false green — tie the exit code to the assertion, or read the output and judge it yourself. Fix the root cause; never silence a check to pass it — `|| true`, `2>/dev/null`, `# type: ignore`, or deleting the failing assertion are false greens too.
-- **Don't manufacture proof.** Counting braces, grepping for a function name, or restating a file's byte size proves nothing about whether the code *works* — that's busywork dressed as verification. Either run the real thing or move on. Match the check to the task; never invent a hollow one just to look thorough.
+- **Don't manufacture proof.** Counting braces, grepping for a function name, or restating a file's byte size proves nothing about whether the code *works* — that's busywork dressed as verification. Run the real thing or mark it `unverified`; never report a check you didn't run or a number you didn't compute.
 
 **Not everything has an automatic check.** For design, prose, UI mockups, research, or a creative artifact there's no green to chase — produce it well and briefly describe what you made. Don't stall trying to "prove" subjective work.
 

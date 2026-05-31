@@ -186,6 +186,18 @@ type Model struct {
 	// deterministically swallows the call can't loop. Reset in endTurn.
 	emptyNudged bool
 
+	// Finish re-grounding nudge — the fourth soft backstop. The three above catch
+	// doing-too-much (failure, runaway) and stopping-with-nothing-said (empty).
+	// This catches the false-green finish: a turn that did real work ending with a
+	// confident summary for something it never actually ran. When a substantial
+	// turn (toolRounds >= verifyNudgeMinRounds) is about to finish with a clean,
+	// non-empty reply, one re-prompt makes the model re-walk the original request
+	// and run the check that proves each runnable part — or mark it unverified
+	// honestly — instead of dressing up a brace-count or an HTTP 200 as proof. A
+	// nudge, never a hard yield; verifyNudged latches it to once per turn. Reset in
+	// endTurn.
+	verifyNudged bool
+
 	// liveContextSize is the per-profile, runtime-only context window the
 	// server reports via X-Context-Window. Seeded by Probe at activation and
 	// refreshed on every chat EventDone, so a server-side change applies on the
@@ -591,6 +603,7 @@ func (m *Model) endTurn() {
 	m.toolRounds = 0
 	m.runawayNudged = false
 	m.emptyNudged = false
+	m.verifyNudged = false
 }
 
 func (m *Model) buildMessages() []chmctx.Message {
@@ -819,6 +832,14 @@ func (m Model) handleStreamClosed() (tea.Model, tea.Cmd) {
 		// call into the reply text instead. The fix is server-side.
 		m.appendLine(w)
 		dbgWritef("leak", "turn ended with tool-call text leaked into the reply (server-side parser misconfigured)")
+	} else if m.maybeVerifyNudge() {
+		// A substantial turn is finishing with a clean, non-empty summary. Re-ground
+		// it once to the original request and let the model verify — or honestly mark
+		// unverified — before it hands control back. Mirrors the empty-reply re-prompt:
+		// applyDone already flushed this summary to scrollback and appended it to
+		// history, so the streaming buffer is clean and startChat resumes safely.
+		m.phase = phaseThinking
+		return m, m.startChat()
 	}
 	m.finalizeTurn()
 	m.endTurn()
@@ -1001,6 +1022,36 @@ func (m *Model) maybeRunawayNudge() {
 			"Note: %d tool calls so far this turn without finishing. If you're still making real progress, keep going. If you're repeating steps, stuck, or unsure you're converging, stop and tell the user where things stand and what's blocking you.",
 			m.toolRounds),
 	})
+}
+
+// verifyNudgeMinRounds is how many tool calls a turn must have dispatched before
+// the finish re-grounding nudge can fire. Set so only a turn that did real,
+// multi-step work trips it: a quick answer or a one-line edit stays well under it,
+// while a build / refactor / test-fix loop clears it easily. Below this the
+// original request is still close in context and a re-ground would be noise; the
+// galaxy runs that shipped broken-but-claimed-done artifacts each made dozens.
+const verifyNudgeMinRounds = 8
+
+// maybeVerifyNudge appends one re-grounding system note when a substantial turn
+// (>= verifyNudgeMinRounds tool calls) is about to finish with a clean, non-empty
+// reply, then latches so it fires at most once per turn. Returns true when it
+// nudged, so the caller re-prompts and the model can verify before its final
+// summary. The false-green finish — a confident summary for an artifact that was
+// never actually run — is invisible to the other three backstops, which only see
+// repeated failures, runaway counts, or an empty reply. Framed as re-grounding +
+// honest verification, never a stop order: telling a 30B to "stop" mid-task is the
+// premature-completion failure we otherwise fight.
+func (m *Model) maybeVerifyNudge() bool {
+	if m.verifyNudged || m.toolRounds < verifyNudgeMinRounds {
+		return false
+	}
+	m.verifyNudged = true
+	dbgWritef("nudge", "finish re-grounding nudge injected at %d tool calls this turn", m.toolRounds)
+	m.history = append(m.history, chmctx.Message{
+		Role:    chmctx.RoleSystem,
+		Content: "Before you finish: re-read the original request and walk its acceptance criteria one at a time. For each, name the check you actually ran and what it showed. Anything runnable you built or changed is proven only by running it — build or type-check it, run the test, execute the script, or for a page or UI load it in a headless browser and drive the primary interaction (click Start, press the keys, submit the form) and confirm the state changed — then fix what breaks and re-run. If a check genuinely can't run here, mark it `unverified: <what> — <why>`; never dress up a static check (a brace count, a grep, an HTTP 200) as proof, and never report a check you didn't run. Then reply with your one-line summary.",
+	})
+	return true
 }
 
 // cursorOnFirstLine: true when ↑ should walk prompt history instead of moving
