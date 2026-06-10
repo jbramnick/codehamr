@@ -25,14 +25,16 @@ func WriteFile(path, content string) string {
 }
 
 // WriteFileSchema is the OpenAI tool definition for write_file. The description
-// steers the model away from bash heredocs (shell-quoting failure mode) toward
-// write_file for any non-trivial file write.
+// steers the model away from bash heredocs (shell-quoting failure mode) for
+// small-to-medium writes, and toward heredoc appends for large files (streamed
+// tool-call args truncate server-side), mirroring the system prompt's rule so
+// the two instruction channels can't contradict each other.
 func WriteFileSchema() map[string]any {
 	return map[string]any{
 		"type": "function",
 		"function": map[string]any{
 			"name":        WriteFileName,
-			"description": "Write content bytes to a file at path. Creates parent directories. Overwrites existing files. Use this instead of bash heredocs for multi line content or content with single quotes, dollar signs, or backticks - no shell quoting issues.",
+			"description": "Write content bytes to a file at path. Creates parent directories. Overwrites existing files. Use this instead of bash heredocs for small-to-medium multi line content or content with single quotes, dollar signs, or backticks - no shell quoting issues. Content beyond a few hundred lines gets truncated by the server mid-stream: build large files with bash heredoc appends (cat > path <<'EOF' first, then cat >> path <<'EOF' per part) from the first call.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{

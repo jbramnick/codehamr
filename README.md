@@ -84,7 +84,13 @@ Local LLMs finally caught up, and we love it. For the best experience we recomme
 
 Info for Ollama users: Ollama's `/v1` endpoint reports no context-window header, so codehamr packs blind to `context_size` in your config. If that exceeds what your server honors, Ollama silently front-truncates the prompt, and codehamr loses its system prompt and earlier tool results mid-task with no error. Ollama Desktop may cap context at 4k: open settings, lift the **Context length** slider to **64k+** (RAM / VRAM permitting), and raise `context_size` in `.codehamr/config.yaml` to match. The seeded default is a safe 32k.
 
-Sampling matters too: a ~30B-class model typically wants `temperature 0.6`, `top_p 0.95`, `top_k 20`, and **never greedy decoding** (temp 0), which sends it into endless repetition loops. If it still loops, add a small `presence_penalty`. These are server-side knobs (Ollama Modelfile / your endpoint), set them there.
+Sampling matters too: for coding, a ~30B-class model typically wants `temperature 0.6`, `top_p 0.95`, `top_k 20`, and **never greedy decoding** (temp 0), which sends it into endless repetition loops. If it still loops, add a small `presence_penalty` and check your server actually applies it (current Ollama silently ignores penalty params). These are server-side knobs, set them at your endpoint.
+
+If the model prints tool calls as text instead of acting, enable your server's tool-call parser; codehamr warns you when that happens.
+
+## Give the agent a runtime
+
+codehamr verifies by running things, so give its sandbox the toolchains your project needs; it cannot install them itself. If a check can't run, it reports `unverified:` instead of pretending.
 
 ## Compare
 

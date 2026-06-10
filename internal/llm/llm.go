@@ -96,6 +96,7 @@ type streamChunk struct {
 	} `json:"choices"`
 	Usage *struct {
 		CompletionTokens int `json:"completion_tokens"`
+		PromptTokens     int `json:"prompt_tokens"`
 	} `json:"usage,omitempty"`
 }
 
@@ -120,12 +121,17 @@ type Event struct {
 	// ctx.Pack uses what the server allows, not config.yaml's guess. Zero
 	// means no live value in this response.
 	ContextWindow int
-	ToolCall      *chmctx.ToolCall
-	Final         *chmctx.Message
-	Budget        cloud.BudgetStatus
-	Tokens        int
-	Elapsed       time.Duration
-	Err           error
+	ToolCall *chmctx.ToolCall
+	Final    *chmctx.Message
+	Budget   cloud.BudgetStatus
+	Tokens   int
+	// PromptTokens is the server-counted prompt size from usage.prompt_tokens,
+	// set only on EventDone when the server reported usage. Debug-log
+	// calibration only (actual vs the char/4 packing estimate); it drives no
+	// behavior. Zero means the server didn't report it.
+	PromptTokens int
+	Elapsed      time.Duration
+	Err          error
 }
 
 type EventKind int
@@ -303,7 +309,7 @@ func (c *Client) run(parent context.Context, msgs []chmctx.Message, tools []Tool
 
 	budget := cloud.FromHeaders(resp.Header)
 	ctxWindow := cloud.ContextWindowFromHeaders(resp.Header)
-	final, tokens, err := readSSE(parent, resp.Body, budget, out, func() { watchdog.Reset(idle) })
+	final, tokens, promptTokens, err := readSSE(parent, resp.Body, budget, out, func() { watchdog.Reset(idle) })
 	watchdog.Stop()
 	if err != nil {
 		if stalled.Load() {
@@ -318,6 +324,7 @@ func (c *Client) run(parent context.Context, msgs []chmctx.Message, tools []Tool
 		Budget:        budget,
 		ContextWindow: ctxWindow,
 		Tokens:        tokens,
+		PromptTokens:  promptTokens,
 		Elapsed:       time.Since(start),
 	})
 }
@@ -447,18 +454,19 @@ func errorMessageFromBody(b []byte) string {
 
 // readSSE reads OpenAI SSE frames until [DONE] or EOF, forwarding
 // content/reasoning/tool-call events to out. Returns the final assistant
-// message (content + accumulated tool calls), the server token count, and any
-// scanner error. parent is threaded through so sends abort on cancellation
-// instead of blocking on an undrained buffer.
-func readSSE(parent context.Context, body io.Reader, budget cloud.BudgetStatus, out chan<- Event, onFrame func()) (*chmctx.Message, int, error) {
+// message (content + accumulated tool calls), the server completion and prompt
+// token counts, and any scanner error. parent is threaded through so sends
+// abort on cancellation instead of blocking on an undrained buffer.
+func readSSE(parent context.Context, body io.Reader, budget cloud.BudgetStatus, out chan<- Event, onFrame func()) (*chmctx.Message, int, int, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 1<<16), 4<<20)
 
 	var (
-		fullContent strings.Builder
-		slots       = map[int]*toolSlot{}
-		order       []int
-		tokens      int
+		fullContent  strings.Builder
+		slots        = map[int]*toolSlot{}
+		order        []int
+		tokens       int
+		promptTokens int
 	)
 
 	for scanner.Scan() {
@@ -479,15 +487,16 @@ func readSSE(parent context.Context, body io.Reader, budget cloud.BudgetStatus, 
 		}
 		for _, choice := range sc.Choices {
 			if !dispatchDelta(parent, choice.Delta, budget, &fullContent, slots, &order, out) {
-				return nil, 0, parent.Err()
+				return nil, 0, 0, parent.Err()
 			}
 		}
 		if sc.Usage != nil {
 			tokens = sc.Usage.CompletionTokens
+			promptTokens = sc.Usage.PromptTokens
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
 	// Emit accumulated tool calls once at stream end, independent of
@@ -501,14 +510,14 @@ func readSSE(parent context.Context, body io.Reader, budget cloud.BudgetStatus, 
 	}
 	for i := range calls {
 		if !sendEvent(parent, out, Event{Kind: EventToolCall, ToolCall: &calls[i], Budget: budget}) {
-			return nil, 0, parent.Err()
+			return nil, 0, 0, parent.Err()
 		}
 	}
 	return &chmctx.Message{
 		Role:      chmctx.RoleAssistant,
 		Content:   fullContent.String(),
 		ToolCalls: calls,
-	}, tokens, nil
+	}, tokens, promptTokens, nil
 }
 
 // dispatchDelta forwards reasoning and content as events, then accumulates

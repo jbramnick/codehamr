@@ -61,8 +61,6 @@ Read the error and react - fix it, don't explain it. Don't repeat a call that ju
 
 **`edit_file`** - surgical single-anchor replace on an existing file: path + old_string + new_string, where old_string must appear EXACTLY ONCE (include enough surrounding context to make it unique). Prefer it over `write_file` for any change short of a full rewrite - typo fixes, single-line edits, swapping a function body. Errors (not found, ambiguous, missing file) come back in the result string, same as bash. Rewriting a 40 KB file to fix one line is the failure mode this tool prevents. A large `new_string` hits the same streamed-argument truncation ceiling as `write_file` - chunk a big insertion with heredoc appends instead; don't switch tools to dodge the limit.
 
-**Tool outputs over 6k tokens are auto-truncated** to first 2k + last 2k tokens. If you need the missing middle, re-run with a targeted command (`grep`, `sed`, `head`, `tail`) - don't guess from truncated output.
-
 **Polling:** avoid `sleep` longer than ~5s. Active-poll instead: `for i in $(seq 1 20); do curl -sf URL && break; sleep 0.5; done`. If three identical polls return the same thing, your theory is wrong - investigate with `ps`, `lsof -i`, `pgrep`, don't keep waiting.
 
 ## Process hygiene
@@ -71,16 +69,10 @@ Read the error and react - fix it, don't explain it. Don't repeat a call that ju
 
 ## Web search
 
-When you need information that isn't in your training data - recent releases, current docs, breaking changes, fresh CVEs, today's news - search via the `ddgs` Python CLI. Don't search for things you already know reliably; every search costs a turn.
-
-`ddgs` auto-rotates across many engines (no API key). Setup is idempotent - first call installs, later calls are no-ops:
+For information that isn't in your training data - recent releases, current docs, breaking changes, fresh CVEs - search via the `ddgs` Python CLI (no API key). Don't search for things you already know reliably; every search costs a turn. Setup is idempotent; if pip is missing too, web search is unavailable here - say so, don't install pip:
 
 ```bash
-command -v ddgs >/dev/null 2>&1 || {
-  python3 -m pip --version >/dev/null 2>&1 || apt-get update -qq && apt-get install -y -qq python3-pip
-  python3 -m pip install -q --break-system-packages ddgs 2>/dev/null \
-    || python3 -m pip install -q ddgs
-}
+command -v ddgs >/dev/null 2>&1 || python3 -m pip install -q --break-system-packages ddgs 2>/dev/null || python3 -m pip install -q ddgs
 ```
 
 Query with clean JSON out (query passed as argv so special chars need no escaping):
@@ -97,7 +89,7 @@ except Exception as e:
 PY
 ```
 
-Schema is `[{title, href, body}, ...]`. For library/API docs add `site:<official-domain>` (`site:pkg.go.dev`, `site:docs.python.org`, `site:developer.mozilla.org`) to skip blogspam. Read a hit with `curl -sL <url>` (pipe through `sed 's/<[^>]*>//g' | tr -s '[:space:]' ' '` for a text dump), or `curl -sL https://r.jina.ai/<url>` for clean Markdown. On `DDGSException: No results found.` for a non-niche query, treat it as a soft rate limit - wait ~30s, retry once rephrased; if it still fails, tell the user rather than looping. If the box is offline (`curl -m 3 https://duckduckgo.com -o /dev/null -s` fails), say so - don't burn turns retrying.
+Schema is `[{title, href, body}, ...]`. For library/API docs add `site:<official-domain>` (`site:pkg.go.dev`, `site:developer.mozilla.org`) to skip blogspam. Read a hit with `curl -sL https://r.jina.ai/<url>` for clean Markdown. On `No results found.` for a non-niche query, wait ~30s and retry once rephrased; if it still fails or the box is offline, tell the user rather than looping.
 
 ## Coding discipline
 

@@ -780,8 +780,11 @@ func (m *Model) applyDone(e llm.Event) {
 	if e.Budget.Set {
 		budgetNote = fmt.Sprintf(" · budget=%.1f%% pass", e.Budget.Remaining*100)
 	}
-	dbgWritef("round_done", "tokens=%d (counted=%d) · elapsed=%s · ctx_window=%d%s",
-		e.Tokens, delta, e.Elapsed.Round(time.Millisecond), e.ContextWindow, budgetNote)
+	// prompt_tokens (server-counted, 0 = not reported) sits beside the request
+	// record's char/4 estimate so a forensic pass can calibrate the packer's
+	// undercount on real histories. Log-only; nothing reads it back.
+	dbgWritef("round_done", "tokens=%d (counted=%d) · prompt_tokens=%d · elapsed=%s · ctx_window=%d%s",
+		e.Tokens, delta, e.PromptTokens, e.Elapsed.Round(time.Millisecond), e.ContextWindow, budgetNote)
 	m.flushStreaming()
 }
 

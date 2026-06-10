@@ -357,23 +357,28 @@ func TestChatSendsStreamIncludeUsage(t *testing.T) {
 	}
 }
 
-// TestChatReadsUsageTokens: tokens come from `usage.completion_tokens`, not
-// content length; we trust what the backend reports.
+// TestChatReadsUsageTokens: tokens come from `usage.completion_tokens` (and
+// prompt_tokens rides along for the debug-log calibration), not content
+// length; we trust what the backend reports.
 func TestChatReadsUsageTokens(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		sseOK(w, []string{
-			`{"choices":[{"delta":{"content":"` + strings.Repeat("x", 100) + `"}}],"usage":{"completion_tokens":7}}`,
+			`{"choices":[{"delta":{"content":"` + strings.Repeat("x", 100) + `"}}],"usage":{"completion_tokens":7,"prompt_tokens":42}}`,
 		})
 	}))
 	defer srv.Close()
-	var tokens int
+	var tokens, promptTokens int
 	for _, e := range collect(New(srv.URL, "m", "").Chat(context.Background(), nil, nil)) {
 		if e.Kind == EventDone {
 			tokens = e.Tokens
+			promptTokens = e.PromptTokens
 		}
 	}
 	if tokens != 7 {
 		t.Fatalf("expected tokens=7 from usage block, got %d", tokens)
+	}
+	if promptTokens != 42 {
+		t.Fatalf("expected prompt_tokens=42 from usage block, got %d", promptTokens)
 	}
 }
 
