@@ -45,7 +45,7 @@ Then run `codehamr` in your project.
 ## Config
 
 On first run codehamr seeds `.codehamr/config.yaml` with a `local`
-(Ollama, cLLM, LM-Studio) profile and a `hamrpass` profile. The system prompt is embedded
+(Ollama, vLLM, LM-Studio) profile and a `hamrpass` profile. The system prompt is embedded
 in the binary, not on disk. Project specific rules go straight into the
 chat: tell the agent what matters, the conversation carries it.
 
