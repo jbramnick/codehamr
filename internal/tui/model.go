@@ -78,6 +78,17 @@ func (o turnOutcome) marker() string {
 	return ""
 }
 
+// queuedPrompt is a prompt the user committed while a turn was running, held
+// until the turn ends and then auto-submitted. send is the chip-expanded text
+// for the LLM; echo is the collapsed, trimmed form shown in the queued box and
+// the scrollback echo. Chip state is not preserved: an unqueued or recalled
+// paste reappears expanded (matching disk-loaded history), never as a chip, but
+// its content is always intact.
+type queuedPrompt struct {
+	send string
+	echo string
+}
+
 type Model struct {
 	Version    string
 	ProjectDir string
@@ -171,6 +182,13 @@ type Model struct {
 	// histDraft stashes the unsent draft when ↑ first leaves the live line, so
 	// ↓ back to histIdx -1 restores it instead of clearing the user's typing.
 	histDraft promptEntry
+
+	// queued holds a single prompt the user committed while a turn was still
+	// running, auto-submitted when the turn finishes naturally (see
+	// handleStreamClosed; a Ctrl+C/error abort leaves it untouched for manual
+	// send). nil = nothing queued. Enter mid-turn fills/appends to it; Backspace
+	// on an empty prompt pulls it back for editing (see queuePrompt/unqueuePrompt).
+	queued *queuedPrompt
 
 	// slash-autocomplete popover state. suggest holds command rows (when
 	// suggestArgLevel is false) or argument rows for activeCmd (when true):
@@ -823,6 +841,17 @@ func (m *Model) abortTurn(banner string) {
 	if banner != "" {
 		m.appendLine(banner)
 	}
+	// A prompt queued mid-turn must NOT auto-fire on an abort: the user took back
+	// control, so its follow-up may no longer be wanted. Restore it to the
+	// textarea instead (editable, one Enter to send), which also avoids leaving an
+	// idle "queued" box that would orphan-fire after the next turn. Only when the
+	// textarea is empty, so a draft typed mid-turn isn't clobbered.
+	if m.queued != nil {
+		if m.ta.Value() == "" {
+			m.setPromptText(m.queued.send)
+		}
+		m.queued = nil
+	}
 	// finalizeTurn folds the in-flight estimate into the counters and zeroes it,
 	// so the avg counts what was generated up to the interrupt; don't drop it here.
 	m.finalizeTurn(outcomeStopped)
@@ -928,7 +957,23 @@ func (m Model) handleStreamClosed() (tea.Model, tea.Cmd) {
 	}
 	m.finalizeTurn(outcome)
 	m.endTurn()
-	return m, nil
+	return m.fireQueued()
+}
+
+// fireQueued auto-submits a prompt the user queued mid-turn, once the turn has
+// wound down to idle. Reached only from the natural finish path (here, after
+// finalizeTurn/endTurn); a Ctrl+C or stream-error abort routes through abortTurn
+// and never gets here, so an interrupt leaves the slot for a manual send. No-op
+// when nothing is queued. The expanded send goes to the LLM, the collapsed echo
+// to scrollback, exactly as a typed submit; the recall entry carries the expanded
+// text (no chip), matching disk-loaded history.
+func (m Model) fireQueued() (tea.Model, tea.Cmd) {
+	if m.queued == nil {
+		return m, nil
+	}
+	q := m.queued
+	m.queued = nil
+	return m.submit(q.send, q.echo, promptEntry{display: q.send})
 }
 
 // newestAssistantEmpty reports whether the turn's final assistant message

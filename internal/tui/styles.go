@@ -41,4 +41,9 @@ var (
 	stylePopoverRow      = lipgloss.NewStyle()
 	stylePopoverCurrent  = lipgloss.NewStyle().Bold(true)
 	stylePopoverSelected = lipgloss.NewStyle().Bold(true).Foreground(hamrColor)
+
+	// Queued-prompt panel: a faint rounded box above the prompt holding a prompt
+	// the user lined up mid-turn. Structural framing, not a highlight, so it
+	// stays faint rather than taking the accent. Width is set per-render.
+	styleQueued = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Faint(true)
 )

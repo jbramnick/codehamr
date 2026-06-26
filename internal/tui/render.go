@@ -86,12 +86,54 @@ func (m *Model) recomputeLayout() {
 }
 
 // maxTextareaHeight caps the textarea: terminal minus chrome, breathing room,
-// and any active popover. Shared by recomputeLayout and preGrowTextarea.
+// the active popover, and the queued-prompt box. Shared by recomputeLayout and
+// preGrowTextarea.
 func (m *Model) maxTextareaHeight() int {
 	if m.height <= 0 {
 		return 1
 	}
-	return max(1, m.height-minViewport-chromeHeight-m.popoverHeight())
+	return max(1, m.height-minViewport-chromeHeight-m.popoverHeight()-m.queuedHeight())
+}
+
+// queuedBodyCap bounds the queued box body: only the first queuedBodyCap echo
+// lines render (the rest collapse to a "+N more" line), so a long appended queue
+// can't push the status bar off-screen. Sibling to popoverCap.
+const queuedBodyCap = 4
+
+// queuedHeight is the rows renderQueued occupies in View(), 0 when nothing is
+// queued. Subtracted from the textarea cap so a tall queued box can't crowd out
+// the status bar, mirroring popoverHeight.
+func (m Model) queuedHeight() int {
+	if m.queued == nil {
+		return 0
+	}
+	return strings.Count(m.renderQueued(), "\n") + 1
+}
+
+// renderQueued draws the pending-prompt box shown above the divider while a turn
+// runs: a faint title line plus a rounded panel with the collapsed echo, so the
+// user sees what will auto-submit when the turn ends and how to recall it. Empty
+// when nothing is queued.
+func (m Model) renderQueued() string {
+	if m.queued == nil {
+		return ""
+	}
+	lines := strings.Split(m.queued.echo, "\n")
+	extra := 0
+	if len(lines) > queuedBodyCap {
+		extra = len(lines) - queuedBodyCap
+		lines = lines[:queuedBodyCap]
+	}
+	body := strings.Join(lines, "\n")
+	if extra > 0 {
+		body += fmt.Sprintf("\n+%d more", extra)
+	}
+	// Width-3 leaves the border total at width-1, matching the divider's blank
+	// last column (the macOS last-column-wrap guard in View). lipgloss wraps the
+	// body to fit the inner width.
+	inner := max(m.width-3, 1)
+	box := styleQueued.Width(inner).Render(body)
+	return styleDim.Render("queued · Backspace to edit") + "\n" + box
 }
 
 // preGrowTextarea inflates Height to the cap *before* a KeyMsg is processed.
@@ -198,6 +240,9 @@ func (m Model) View() string {
 	var pieces []string
 	if m.streaming.Len() > 0 {
 		pieces = append(pieces, ansi.Wrap(m.streaming.String(), m.width, ""))
+	}
+	if q := m.renderQueued(); q != "" {
+		pieces = append(pieces, q)
 	}
 	if p := m.renderPopover(); p != "" {
 		pieces = append(pieces, p)

@@ -27,6 +27,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// history stay; Ctrl+L tidies input, /clear starts over.
 		m.ta.Reset()
 		return m, tea.ClearScreen
+	case tea.KeyBackspace:
+		// Mid-turn Backspace on an empty prompt pulls a queued prompt back into
+		// the textarea for editing; any other Backspace is an ordinary character
+		// delete and falls through to the textarea.
+		if m.phase.active() && m.queued != nil && m.ta.Value() == "" {
+			return m.unqueuePrompt()
+		}
 	case tea.KeyCtrlD:
 		// Ctrl+D on empty input = EOF = quit; no-op on non-empty so a
 		// reflexive press never destroys a draft, and no-op mid-turn (the
@@ -200,7 +207,7 @@ func (m Model) handleEnter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.forwardToTextarea(msg)
 	}
 	if m.phase.active() {
-		return m, nil
+		return m.queuePrompt()
 	}
 	sel, hasSel := m.currentSuggestion()
 	// Command-level Enter on an args-taking command advances to the arg
@@ -236,4 +243,45 @@ func (m Model) handleEnter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.ta.Reset()
 	m.closePopover()
 	return m.submit(sendText, echoText, entry)
+}
+
+// queuePrompt stashes the textarea contents to auto-submit when the running turn
+// finishes (see fireQueued), then clears the input so the next prompt can be
+// typed. A second call appends newline-joined, so a multi-part instruction builds
+// up in one slot and fires as a single turn. Empty input is a no-op, so a
+// reflexive mid-turn Enter stays silent as it always did. Value() feeds the LLM
+// (chips expanded), DisplayValue() the visible echo (chips collapsed), the same
+// split submit uses. Slash text queues like any prompt and routes through submit
+// when it fires.
+func (m Model) queuePrompt() (tea.Model, tea.Cmd) {
+	send := strings.TrimSpace(m.ta.Value())
+	echo := strings.TrimSpace(m.ta.DisplayValue())
+	if send == "" {
+		return m, nil
+	}
+	if m.queued == nil {
+		m.queued = &queuedPrompt{send: send, echo: echo}
+	} else {
+		// A fresh pointer, not an in-place edit: Model is copied by value across
+		// bubbletea, so mutating *m.queued would also reach through the discarded
+		// prior copy that still aliases the same struct.
+		m.queued = &queuedPrompt{
+			send: m.queued.send + "\n" + send,
+			echo: m.queued.echo + "\n" + echo,
+		}
+	}
+	m.ta.Reset()
+	m.closePopover()
+	return m, nil
+}
+
+// unqueuePrompt pulls the queued prompt back into the textarea and clears the
+// slot, so a queued follow-up can be edited or dropped with one Backspace.
+// Reversible counterpart to queuePrompt; Ctrl+C still cancels the turn, a
+// separate concern. The expanded text returns (no chip), content intact.
+func (m Model) unqueuePrompt() (tea.Model, tea.Cmd) {
+	send := m.queued.send
+	m.queued = nil
+	m.setPromptText(send)
+	return m, nil
 }
