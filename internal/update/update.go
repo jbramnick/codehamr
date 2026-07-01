@@ -35,7 +35,7 @@ import (
 // Direct CDN download, no GitHub API call, so no rate limit even for users
 // who start many sessions. var not const so tests can point it at an httptest
 // server; production never reassigns it.
-var checksumsURL = "https://github.com/jbramnick/codehamr/releases/latest/download/codehamr_checksums.txt"
+var checksumsURL = "https://github.com/jbramnick/codehamr/releases/latest/download/jimmyhamr_checksums.txt"
 
 // releaseBase is the "latest" redirect for individual binary assets; combined
 // with an assetName to form the download URL in Apply.
@@ -96,7 +96,7 @@ func assetName(goos, goarch string) (string, bool) {
 	if goarch != "amd64" && goarch != "arm64" {
 		return "", false
 	}
-	return fmt.Sprintf("codehamr-%s-%s%s", goos, goarch, ext), true
+	return fmt.Sprintf("jimmyhamr-%s-%s%s", goos, goarch, ext), true
 }
 
 // hashFile streams a file through sha256.

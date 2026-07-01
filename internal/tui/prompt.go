@@ -57,7 +57,7 @@ type promptEntry struct {
 // styling lives here so model.go never touches textarea internals directly.
 func newPromptInput() promptInput {
 	ta := textarea.New()
-	ta.Placeholder = "Ask codehamr. / or Tab for commands · Ctrl+C cancels"
+	ta.Placeholder = "Ask jimmyhamr. / or Tab for commands · Ctrl+C cancels"
 	ta.Focus()
 	ta.CharLimit = 0
 	ta.MaxHeight = 0 // 0 = unbounded; recomputeLayout enforces the cap

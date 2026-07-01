@@ -40,7 +40,7 @@ func OpenDebugLog(dir string) {
 	dbgMu.Lock()
 	dbgFile = f
 	dbgMu.Unlock()
-	dbgWritef("session", "codehamr started · project=%s", dir)
+	dbgWritef("session", "jimmyhamr started · project=%s", dir)
 }
 
 // CloseDebugLog flushes and closes the log. Idempotent.
@@ -106,7 +106,7 @@ func dbgWritef(category, format string, args ...any) {
 // only its size (which feeds the packing budget) is worth recording.
 func dbgWriteSession(version, profile, model, url string, ctxSize, sysTokens int, tools []string) {
 	dbgWritef("session",
-		"codehamr %s · profile=%s · model=%s @ %s\ncontext_size=%d tokens · system_prompt≈%d tokens · tools=[%s]",
+		"jimmyhamr %s · profile=%s · model=%s @ %s\ncontext_size=%d tokens · system_prompt≈%d tokens · tools=[%s]",
 		version, profile, model, url, ctxSize, sysTokens, strings.Join(tools, ", "))
 }
 
