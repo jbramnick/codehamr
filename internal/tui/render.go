@@ -10,7 +10,7 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-// splashCode and splashHamr form the two-tone "CODEHAMR" wordmark printed
+// splashCode and splashHamr form the two-tone "CODEHAMR" wordmark printed test
 // once at startup, pushed into scrollback via tea.Println; it scrolls up
 // naturally as content arrives, so View() needs no hide-on-first-content branch.
 var splashCode = []string{
