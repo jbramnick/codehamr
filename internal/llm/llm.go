@@ -4,7 +4,6 @@
 //
 // One code path serves every backend:
 //   - local Ollama, via the OpenAI-compatible `/v1` shim Ollama itself ships
-//   - the codehamr.com hosted endpoint, hamrpass-keyed (proxy over OpenRouter)
 //   - any other endpoint already speaking OpenAI's wire format
 //
 // Deliberately unsupported, to keep the client uniform:
@@ -415,14 +414,9 @@ func (c *Client) doPost(parent context.Context, body chatRequest) (*http.Respons
 	switch resp.StatusCode {
 	case 401:
 		// Drain before the deferred Close so the keep-alive connection returns
-		// to the pool instead of being discarded, same as the 402/default arms.
+		// to the pool instead of being discarded, same as the default arm.
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil, cloud.BudgetStatus{}, nil, cloud.ErrUnauthorized
-	case 402:
-		// Pass depleted. Body ignored: the status code is the whole signal,
-		// the UI banner is fixed text, the returned snapshot reflects it.
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, cloud.BudgetStatus{Set: true, Remaining: 0}, nil, cloud.ErrBudgetExhausted
 	default:
 		b, _ := io.ReadAll(resp.Body)
 		return nil, cloud.BudgetStatus{}, b, fmt.Errorf("%d: %s", resp.StatusCode, errorMessageFromBody(b))
@@ -430,9 +424,9 @@ func (c *Client) doPost(parent context.Context, body chatRequest) (*http.Respons
 }
 
 // errorMessageFromBody extracts the user-facing string from a non-2xx body.
-// hamrpass wraps errors as `{"error":{"message":...,"provider_hint":...}}`; we
+// OpenRouter wraps errors as `{"error":{"message":...,"provider_hint":...}}`; we
 // prefer provider_hint (providers stash the human diagnostic there), fall back
-// to message, then to the raw first line so non-hamrpass backends still surface
+// to message, then to the raw first line so other backends still surface
 // whatever they emit.
 func errorMessageFromBody(b []byte) string {
 	var env struct {

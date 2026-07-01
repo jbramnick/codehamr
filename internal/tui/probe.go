@@ -111,8 +111,6 @@ func probeErrorMessage(err error) string {
 	switch {
 	case errors.Is(err, cloud.ErrUnauthorized):
 		return "key rejected"
-	case errors.Is(err, cloud.ErrBudgetExhausted):
-		return "budget exhausted"
 	}
 	if un, ok := errors.AsType[cloud.ErrUnreachable](err); ok {
 		return "unreachable (" + un.Err.Error() + ")"

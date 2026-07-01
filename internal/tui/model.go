@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -303,7 +302,7 @@ func New(cfg *config.Config, cli *llm.Client, projectDir, version string) Model 
 			m.activeContextSize(), chmctx.Tokens(m.system),
 			[]string{tools.BashName, tools.ReadFileName, tools.WriteFileName, tools.EditFileName})
 	}
-	// Seed prompt history from .codehamr/history so ↑ recalls prompts from
+	// Seed prompt history from .jimmyhamr/history so ↑ recalls prompts from
 	// earlier sessions. Loaded entries carry no chip metadata (the on-disk
 	// format stores expanded text only), so a recalled multi-line paste
 	// appears uncollapsed, the right tradeoff for a cat-friendly history file.
@@ -574,30 +573,18 @@ func (m Model) handleResizeSettle(msg resizeSettleMsg) (tea.Model, tea.Cmd) {
 // pasted log every turn; entry is the history snapshot replayed by ↑/↓,
 // including chip state.
 func (m Model) submit(sendText, echoText string, entry promptEntry) (tea.Model, tea.Cmd) {
-	// Redact secret-bearing slash commands (/hamrpass <key>) before they reach
-	// any sink that persists or replays them: the scrollback echo (kept in
-	// m.scroll, re-emitted verbatim on every resize), the ↑/↓ recall ring, and
-	// the on-disk .codehamr/history file. Without this, submit leaks the bearer
-	// token into a second on-disk copy and into UI recall, undermining the
-	// 0o600 + symlink defences on the key in config.yaml. Raw sendText still
-	// flows to runSlash so activation works. No-op for non-secret input.
-	safeText := redactSlash(sendText)
-	if safeText != sendText {
-		echoText = safeText
-		entry = promptEntry{display: safeText}
-	}
 	// Echo to scrollback with the same accent ▌ the textarea uses, one visual
 	// language for "your voice" across live input and history.
 	m.appendLine(stylePrompt.Render("▌ ") + styleUser.Render(echoText))
 	m.promptHistory = append(m.promptHistory, entry)
 	m.histIdx = -1
-	// Persist the (redacted) prompt so ↑ finds it after a restart. Errors are
-	// swallowed: a transient failure isn't worth derailing submit, and a
-	// permanent one (read-only .codehamr/) would just be noise on every prompt.
-	_ = appendPromptHistory(m.cfg.Dir, safeText)
+	// Persist the prompt so ↑ finds it after a restart. Errors are swallowed:
+	// a transient failure isn't worth derailing submit, and a permanent one
+	// (read-only .jimmyhamr/) would just be noise on every prompt.
+	_ = appendPromptHistory(m.cfg.Dir, sendText)
 
 	if strings.HasPrefix(sendText, "/") {
-		dbgWritef("user_slash", "%s", safeText)
+		dbgWritef("user_slash", "%s", sendText)
 		return m.runSlash(sendText)
 	}
 	// A new user message is a new goal: drop any in-progress failure streak so
@@ -824,9 +811,6 @@ func (m *Model) applyError(e llm.Event) tea.Cmd {
 	dbgWritef("error", "%v", e.Err)
 	if isUnreachable(e.Err) {
 		m.connected = false
-	}
-	if errors.Is(e.Err, cloud.ErrBudgetExhausted) {
-		m.budget = e.Budget
 	}
 	m.abortTurn(styleError.Render(m.errorMessage(e)))
 	return nil

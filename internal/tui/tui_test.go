@@ -460,9 +460,7 @@ func TestPopoverEnterSubmitsNoArgCommand(t *testing.T) {
 // "next", Tab cycles instead) with the active profile preselected.
 func TestArgPopoverOpensForModels(t *testing.T) {
 	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
-	// Bootstrap seeds local + hamrpass; drop the latter so this asserts popover
-	// content, not config defaults.
-	delete(m.cfg.Models, "hamrpass")
+	// Add a second profile so the popover has content.
 	m.cfg.Models["remote"] = &config.Profile{
 		LLM: "cloud-model", URL: "http://r", Key: "sk-r", ContextSize: 200000,
 	}
@@ -747,11 +745,11 @@ func TestSlashModelSwitchDropsStickyFallbackState(t *testing.T) {
 	}
 }
 
-// TestSlashModelSwitchClearsStaleBudget: after a hamrpass turn leaves m.budget
-// set, switching to a profile that emits no X-Budget-* headers (local Ollama)
-// would keep rendering the old percentage forever; StatusSuffix only checks
-// .Set, not which profile produced it. rebuildClient must drop the cached
-// snapshot so the segment disappears until a new backend reports its own.
+// TestSlashModelSwitchClearsStaleBudget: after a turn leaves m.budget set,
+// switching to another profile would keep rendering the old percentage forever;
+// StatusSuffix only checks .Set, not which profile produced it. rebuildClient
+// must drop the cached snapshot so the segment disappears until a new backend
+// reports its own.
 func TestSlashModelSwitchClearsStaleBudget(t *testing.T) {
 	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
 	m.cfg.Models["local"] = &config.Profile{
@@ -874,7 +872,7 @@ models:
 }
 
 // TestRunSlashPicksUpExternalConfigEdits: runSlash re-reads
-// .codehamr/config.yaml before dispatching, so a profile a user hand-added
+// .jimmyhamr/config.yaml before dispatching, so a profile a user hand-added
 // to the file mid-session shows up on the next /models without a restart.
 func TestRunSlashPicksUpExternalConfigEdits(t *testing.T) {
 	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
@@ -1149,17 +1147,19 @@ func budgetResponseHandler(w http.ResponseWriter, _ *http.Request) {
 // the deferred "✓ active: ..." line with a "ctx: ..." suffix from that window.
 func TestHandleProbeSuccessUpdatesLiveCtxAndPrintsActivation(t *testing.T) {
 	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
-	m.cfg.Active = "hamrpass"
-	out, _ := m.handleProbe(probeMsg{profile: "hamrpass", contextWindow: 262144})
+	profileName := "remote"
+	m.cfg.Models[profileName] = &config.Profile{LLM: "gpt-4", URL: "https://api.example.com", Key: "sk-test", ContextSize: 262144}
+	m.cfg.Active = profileName
+	out, _ := m.handleProbe(probeMsg{profile: profileName, contextWindow: 262144})
 	final := out.(Model)
-	if got := final.liveContextSize["hamrpass"]; got != 262144 {
-		t.Fatalf("liveContextSize[hamrpass] = %d, want 262144", got)
+	if got := final.liveContextSize[profileName]; got != 262144 {
+		t.Fatalf("liveContextSize[%s] = %d, want 262144", profileName, got)
 	}
 	if !final.connected {
 		t.Fatal("successful probe must set connected=true")
 	}
 	scroll := stripANSI(final.scroll.String())
-	if !strings.Contains(scroll, "✓ active: hamrpass") {
+	if !strings.Contains(scroll, "✓ active: "+profileName) {
 		t.Fatalf("expected activation line, got:\n%s", scroll)
 	}
 	if !strings.Contains(scroll, "ctx: 262,144") {
@@ -1216,14 +1216,14 @@ func TestStaleProbeForOldProfileDoesNotOverwriteConnectedFlag(t *testing.T) {
 
 	// Stale success probe for a profile other than the active one must not
 	// confirm "connected" on behalf of the live backend.
-	out, _ := m.handleProbe(probeMsg{profile: "hamrpass", contextWindow: 262144})
+	out, _ := m.handleProbe(probeMsg{profile: "stale-profile", contextWindow: 262144})
 	if !out.(Model).connected {
 		t.Fatal("stale success probe overwrote live connected=true")
 	}
 
 	// Stale failure probe must not flip the live backend to disconnected.
 	m.connected = true
-	out, _ = m.handleProbe(probeMsg{profile: "hamrpass", err: cloud.ErrUnauthorized, silent: true})
+	out, _ = m.handleProbe(probeMsg{profile: "stale-profile", err: cloud.ErrUnauthorized, silent: true})
 	if !out.(Model).connected {
 		t.Fatal("stale failure probe overwrote live connected=true")
 	}
@@ -1232,27 +1232,6 @@ func TestStaleProbeForOldProfileDoesNotOverwriteConnectedFlag(t *testing.T) {
 	out, _ = m.handleProbe(probeMsg{profile: "local", err: cloud.ErrUnauthorized, silent: true})
 	if out.(Model).connected {
 		t.Fatal("probe for the live profile must update connected")
-	}
-}
-
-// TestProbeBudgetExhaustedUpdatesStatusBar: a 402 probe carries a
-// BudgetStatus{Set:true, Remaining:0} snapshot. handleProbe must apply it to
-// m.budget so the bar paints "0% pass" now, not after the first chat call 402s.
-func TestProbeBudgetExhaustedUpdatesStatusBar(t *testing.T) {
-	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
-	m.cfg.Active = "hamrpass"
-	out, _ := m.handleProbe(probeMsg{
-		profile: "hamrpass",
-		budget:  cloud.BudgetStatus{Set: true, Remaining: 0},
-		silent:  true,
-		err:     cloud.ErrBudgetExhausted,
-	})
-	final := out.(Model)
-	if !final.budget.Set {
-		t.Fatal("402 probe must apply the depleted-budget snapshot to m.budget")
-	}
-	if final.budget.Remaining != 0 {
-		t.Fatalf("budget.Remaining = %v, want 0", final.budget.Remaining)
 	}
 }
 
@@ -1265,10 +1244,10 @@ func TestProbeBudgetSnapshotIgnoredForStaleProfile(t *testing.T) {
 	m.cfg.Active = "local"
 	m.budget = cloud.BudgetStatus{Set: true, Remaining: 0.88}
 	out, _ := m.handleProbe(probeMsg{
-		profile: "hamrpass",
+		profile: "stale-profile",
 		budget:  cloud.BudgetStatus{Set: true, Remaining: 0},
 		silent:  true,
-		err:     cloud.ErrBudgetExhausted,
+		err:     cloud.ErrUnauthorized,
 	})
 	final := out.(Model)
 	if final.budget.Remaining != 0.88 {
@@ -1277,16 +1256,18 @@ func TestProbeBudgetSnapshotIgnoredForStaleProfile(t *testing.T) {
 }
 
 // TestActiveContextSizePrefersLiveValue: packing reads liveContextSize first,
-// then Profile.ContextSize, then the floor. Cloud profiles ship ContextSize=0,
-// so without a live value the floor must apply.
+// then Profile.ContextSize, then the floor. A profile with ContextSize=0 falls
+// back to the floor until a live value arrives from the server header.
 func TestActiveContextSizePrefersLiveValue(t *testing.T) {
 	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
-	m.cfg.Active = "hamrpass" // ContextSize=0 by Bootstrap
+	profileName := "zero-ctx"
+	m.cfg.Models[profileName] = &config.Profile{LLM: "m", URL: "http://x", Key: "", ContextSize: 0}
+	m.cfg.Active = profileName
 	if got := m.activeContextSize(); got != defaultPackFallback {
-		t.Fatalf("cloud profile with no live value should use floor %d, got %d",
+		t.Fatalf("profile with no context size should use floor %d, got %d",
 			defaultPackFallback, got)
 	}
-	m.liveContextSize["hamrpass"] = 262144
+	m.liveContextSize[profileName] = 262144
 	if got := m.activeContextSize(); got != 262144 {
 		t.Fatalf("live value must win, got %d", got)
 	}
@@ -1406,18 +1387,6 @@ func TestErrorMessageUnauthorized(t *testing.T) {
 	}
 }
 
-// TestErrorMessageBudgetExhausted: 402 produces the depleted hint pointing
-// users at the top-up page rather than a stack-trace style wrap.
-func TestErrorMessageBudgetExhausted(t *testing.T) {
-	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
-	msg := m.errorMessage(llm.Event{Err: cloud.ErrBudgetExhausted})
-	if !strings.Contains(msg, "depleted") {
-		t.Fatalf("402 error should mention 'depleted': %q", msg)
-	}
-	if !strings.Contains(msg, "codehamr.com") {
-		t.Fatalf("402 error should point at the top-up page: %q", msg)
-	}
-}
 
 // TestCtrlLClearsPromptNotScrollback: Ctrl+L matches Claude Code: it
 // clears the typed input and forces a terminal redraw, but conversation
@@ -2880,9 +2849,9 @@ func TestStaleProbeDoesNotPrintActivationBannerForNonActiveProfile(t *testing.T)
 	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
 	m.cfg.Active = "local"
 
-	out, _ := m.handleProbe(probeMsg{profile: "hamrpass", contextWindow: 262144})
+	out, _ := m.handleProbe(probeMsg{profile: "stale-profile", contextWindow: 262144})
 	final := out.(Model)
-	if got := stripANSI(final.scroll.String()); strings.Contains(got, "✓ active: hamrpass") {
+	if got := stripANSI(final.scroll.String()); strings.Contains(got, "✓ active: stale-profile") {
 		t.Fatalf("stale probe must not print activation banner for non-active profile:\n%s", got)
 	}
 

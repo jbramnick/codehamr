@@ -142,7 +142,7 @@ func Apply(ctx context.Context, execPath string) error {
 	if expected == "" {
 		return fmt.Errorf("checksum lookup: no entry for %s in published manifest", asset)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(execPath), ".codehamr-update-*")
+	tmp, err := os.CreateTemp(filepath.Dir(execPath), ".jimmyhamr-update-*")
 	if err != nil {
 		return err
 	}

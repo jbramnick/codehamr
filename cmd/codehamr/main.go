@@ -60,7 +60,7 @@ func main() {
 	}
 	applyEnvOverrides(cfg)
 
-	// Opt-in debug log (`logging: true`): truncates .codehamr/log.txt and
+	// Opt-in debug log (`logging: true`): truncates .jimmyhamr/log.txt and
 	// records every chat exchange. See tui.OpenDebugLog / dbgWrite.
 	if cfg.Logging {
 		tui.OpenDebugLog(cfg.Dir)
@@ -110,7 +110,7 @@ Keys (inside TUI):
   ctrl+d   quit (on empty input)
 
 Config:
-  .codehamr/config.yaml   per-project settings
+  .jimmyhamr/config.yaml   per-project settings
 
 Env:
   CODEHAMR_URL            override the active profile's url at runtime

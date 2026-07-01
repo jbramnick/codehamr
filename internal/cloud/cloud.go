@@ -1,9 +1,8 @@
-// Package cloud parses the budget and auth signals from the codehamr.com proxy.
+// Package cloud parses the budget and auth signals from API responses.
 // Client-side plumbing only; the server owns all accounting.
 //
 // Wire contract: one budget-fraction header (0.0..1.0), one context-window
-// header, plus standard 401/402. A hamrpass is a prepaid pot of budget, no
-// cooldowns, rate limits, resets, or expiry.
+// header, plus standard 401/402 handling.
 package cloud
 
 import (
@@ -94,10 +93,6 @@ func (b BudgetStatus) StatusSuffix() string {
 	}
 	return fmt.Sprintf(" · %d%% pass", int(b.Remaining*100+0.5))
 }
-
-// ErrBudgetExhausted maps server 402: the pass is depleted and the user must
-// top up before any further request succeeds.
-var ErrBudgetExhausted = errors.New("hamrpass depleted")
 
 // ErrUnauthorized maps server 401.
 var ErrUnauthorized = errors.New("invalid or expired token")

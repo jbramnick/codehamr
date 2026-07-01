@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-// Prompt history persists in .codehamr/history, so recall is per-project
+// Prompt history persists in .jimmyhamr/history, so recall is per-project
 // (cd-stable) and /clear wipes it with the rest of the reset. One
 // strconv-quoted entry per line keeps the format cat-friendly, handles
 // multi-line prompts without a separator, and lets a corrupt line be

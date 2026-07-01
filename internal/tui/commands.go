@@ -67,10 +67,8 @@ func (m Model) errorMessage(e llm.Event) string {
 		return ""
 	}
 	switch {
-	case errors.Is(e.Err, cloud.ErrBudgetExhausted):
-		return "⚠ hamrpass depleted · top up at codehamr.com"
 	case errors.Is(e.Err, cloud.ErrUnauthorized):
-		return "⚠ key rejected · check models." + m.cfg.Active + ".key in .codehamr/config.yaml"
+		return "⚠ key rejected · check models." + m.cfg.Active + ".key in .jimmyhamr/config.yaml"
 	case isUnreachable(e.Err):
 		return "⚠ unreachable: " + m.cfg.ActiveURL() + " · /models to switch profile"
 	default:

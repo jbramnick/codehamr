@@ -24,7 +24,7 @@ var (
 // it reports once on stderr and disables logging: the log must never block
 // the TUI from starting.
 //
-// 0o600 because the log captures every prompt: /hamrpass <key> and bash args
+// 0o600 because the log captures every prompt: bash args can carry secrets.
 // can carry secrets even past the slash redaction below. Owner-only is the
 // only honest answer.
 func OpenDebugLog(dir string) {
@@ -51,28 +51,6 @@ func CloseDebugLog() {
 		_ = dbgFile.Close()
 		dbgFile = nil
 	}
-}
-
-// redactSlash strips the /hamrpass <key> bearer token before it lands in any
-// log. A central hook covers any future secret-bearing command from one place.
-//
-// The split mirrors runSlash's strings.Fields: both must agree on command vs.
-// args, else a multi-line `/hamrpass\n<key>` (Alt+Enter inserts a literal
-// newline) activates via runSlash but slips a literal-space prefix match here,
-// leaking the verbatim key.
-//
-// Case-folded on purpose: a mistyped /HamrPass won't activate (dispatch is
-// case-sensitive) but its token would still reach scrollback, recall ring,
-// history, and log.txt, so redaction errs wider than dispatch, the safe way.
-func redactSlash(line string) string {
-	fields := strings.Fields(line)
-	if len(fields) == 0 || !strings.EqualFold(fields[0], "/hamrpass") {
-		return line
-	}
-	if len(fields) == 1 {
-		return line // no key portion to redact
-	}
-	return "/hamrpass <redacted>"
 }
 
 // dbgEnabled reports whether logging is on. Callers use it to skip building

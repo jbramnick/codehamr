@@ -457,21 +457,6 @@ func TestChat401DrainsBodyForConnReuse(t *testing.T) {
 	}
 }
 
-// TestChat402: budget exhaustion surfaces as a typed error with the snapshot
-// reporting zero remaining, so the UI paints the depleted state immediately.
-func TestChat402(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusPaymentRequired)
-	}))
-	defer srv.Close()
-	evs := collect(New(srv.URL, "m", "k").Chat(context.Background(), nil, nil))
-	if len(evs) != 1 || !errors.Is(evs[0].Err, cloud.ErrBudgetExhausted) {
-		t.Fatalf("want ErrBudgetExhausted, got %+v", evs)
-	}
-	if !evs[0].Budget.Set || evs[0].Budget.Remaining != 0 {
-		t.Fatalf("budget snapshot should report zero remaining: %+v", evs[0].Budget)
-	}
-}
 
 // TestChatUnreachable: transport failure surfaces as ErrUnreachable.
 func TestChatUnreachable(t *testing.T) {
@@ -508,7 +493,7 @@ func TestChatOtherHTTPError(t *testing.T) {
 	}
 }
 
-// TestChatStructuredErrorPrefersProviderHint: the hamrpass proxy wraps upstream
+// TestChatStructuredErrorPrefersProviderHint: OpenRouter wraps upstream errors
 // errors as `{"error":{"message":...,"provider_hint":...}}`. The client must
 // surface provider_hint over message, so users see the useful "retry shortly"
 // text, not "upstream rate limited".
