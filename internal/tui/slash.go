@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -10,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/jbramnick/codehamr/internal/cloud"
+	chmctx "github.com/jbramnick/codehamr/internal/ctx"
 	"github.com/jbramnick/codehamr/internal/config"
 	"github.com/jbramnick/codehamr/internal/llm"
 )
@@ -34,15 +36,14 @@ type command struct {
 // commands lists every slash command, in popover/--help order. Keep it short.
 var commands = []command{
 	{
-		name:        "/hamrpass",
-		description: "set or show hamrpass key",
-		handler:     (Model).cmdHamrpass,
-		// Live key-entry hint: selecting /hamrpass auto-inserts the trailing
-		// space (handleEnter/handleTab do this whenever args != nil), then the
-		// arg popover renders one synthetic row that validates the key live.
-		// The row's value mirrors the input so HasPrefix always keeps it, and
-		// Enter submits "/hamrpass <key>".
-		args: hamrpassArgHint,
+		name:        "/export",
+		description: "export conversation summary to hamr_session_export.md",
+		handler:     (Model).cmdExport,
+	},
+	{
+		name:        "/import",
+		description: "load hamr_session_export.md into context and delete it",
+		handler:     (Model).cmdImport,
 	},
 	{
 		name:        "/clear",
@@ -169,7 +170,7 @@ func (m *Model) printModelList() {
 // its reachability cmd. Keyed profiles (cloud) probe: the success line is
 // delayed until the response arrives so it can carry the live ctx window from
 // X-Context-Window. Keyless profiles (local Ollama) ping and print
-// synchronously. Shared by /models and /hamrpass.
+// synchronously. Shared by /models.
 func (m *Model) confirmActive(profile string) tea.Cmd {
 	p := m.cfg.ActiveProfile()
 	if p.ResolvedKey() != "" {
@@ -222,116 +223,60 @@ func (m Model) cmdClear(_ []string) (tea.Model, tea.Cmd) {
 	return m, tea.Sequence(tea.ClearScreen, eraseScrollback, tea.Println(line))
 }
 
-// hamrpassMinKeyLen guards against half-pasted keys: real keys clear 16,
-// stray fragments don't.
-const hamrpassMinKeyLen = 16
+// cmdExport writes a markdown summary of the current conversation to
+// hamr_session_export.md at the project root.
+func (m Model) cmdExport(_ []string) (tea.Model, tea.Cmd) {
+	projectRoot := filepath.Dir(m.cfg.Dir)
+	path := filepath.Join(projectRoot, "hamr_session_export.md")
 
-// hamrpassValidate is the single source of truth for whether a key is
-// acceptable and what the UI says about it. Shared by the inline /hamrpass
-// handler and the arg popover hint. ok=false with an empty trimmed key is the
-// "show status block" signal.
-//
-// Non-printable/non-ASCII runes are rejected up front: http.Header.Set accepts
-// the bytes but http.Client.Do then errors with `invalid header field value
-// for "Authorization"` on the wire, after the key has already been persisted
-// to config.yaml. Real keys are ASCII-printable; reject anything else early.
-func hamrpassValidate(raw string) (key, hint string, ok bool) {
-	key = strings.TrimSpace(raw)
-	switch {
-	case key == "":
-		return "", "paste your hamrpass key, or Enter for status", false
-	case strings.ContainsAny(key, " \t\r\n"):
-		return key, "no whitespace allowed", false
-	}
-	for _, r := range key {
-		if r < 0x21 || r > 0x7e {
-			return key, "key must be printable ASCII (no control chars)", false
+	var sb strings.Builder
+	sb.WriteString("# Session Export\n\n")
+	for i, msg := range m.history {
+		switch msg.Role {
+		case chmctx.RoleUser:
+			sb.WriteString("## User\n\n```\n")
+		case chmctx.RoleAssistant:
+			sb.WriteString("## Assistant\n\n```\n")
+		case chmctx.RoleTool:
+			sb.WriteString(fmt.Sprintf("## Tool (%s)\n\n```\n", msg.ToolName))
+		default:
+			sb.WriteString("## System\n\n```\n")
 		}
+		sb.WriteString(msg.Content)
+		if !strings.HasSuffix(msg.Content, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("```\n\n")
+		_ = i // keep for potential future use (line numbers)
 	}
-	if len(key) < hamrpassMinKeyLen {
-		return key, fmt.Sprintf("%d/%d chars · keep typing", len(key), hamrpassMinKeyLen), false
-	}
-	return key, "Enter to activate", true
-}
 
-// hamrpassArgHint is the args callback for /hamrpass: one synthetic row whose
-// value mirrors the typed argument and whose description carries the live
-// validation hint. Mirroring keeps the row alive: refreshSuggest filters via
-// HasPrefix(value, prefix), and HasPrefix(x, x) is always true.
-func hamrpassArgHint(m Model) []argOption {
-	_, rest, _ := strings.Cut(m.ta.Value(), " ")
-	rest = strings.TrimLeft(rest, " ")
-	_, hint, ok := hamrpassValidate(rest)
-	mark := "· "
-	switch {
-	case ok:
-		mark = "✓ "
-	case rest != "":
-		mark = "✗ "
-	}
-	return []argOption{{value: rest, description: mark + hint}}
-}
-
-// cmdHamrpass: `/hamrpass` shows status + how-to, `/hamrpass <key>` validates,
-// saves the key on the managed hamrpass profile, switches active, and pings the
-// backend. Validation lives in hamrpassValidate so the popover hint and the
-// inline error stay in lockstep.
-func (m Model) cmdHamrpass(args []string) (tea.Model, tea.Cmd) {
-	if len(args) == 0 {
-		m.printHamrpassStatus()
+	if err := os.WriteFile(path, []byte(sb.String()), 0644); err != nil {
+		m.appendLine(styleError.Render("⚠ export failed: " + err.Error()))
 		return m, nil
 	}
-	if len(args) > 1 {
-		m.appendLine(styleError.Render("⚠ hamrpass keys cannot contain spaces"))
-		return m, nil
-	}
-	key, hint, ok := hamrpassValidate(args[0])
-	if !ok {
-		m.appendLine(styleError.Render("⚠ " + hint))
-		return m, nil
-	}
-	return m, m.activateHamrpass(key)
+	m.appendLine(styleOK.Render(fmt.Sprintf("✓ exported %d messages to hamr_session_export.md", len(m.history))))
+	return m, nil
 }
 
-// printHamrpassStatus emits the status + how-to block (the no-args path).
-func (m *Model) printHamrpassStatus() {
-	hp, ok := m.cfg.Models["hamrpass"]
-	status := "unset"
-	if ok && strings.TrimSpace(hp.Key) != "" {
-		status = "set"
-	}
-	url, llmName := "https://codehamr.com", "hamrpass"
-	if ok {
-		url, llmName = hp.URL, hp.LLM
-	}
-	m.appendLine(styleHamr.Render("hamrpass") + styleDim.Render(" · prepaid pass for the hosted codehamr endpoint"))
-	m.appendLine(styleDim.Render(fmt.Sprintf("  status   : %s", status)))
-	m.appendLine(styleDim.Render(fmt.Sprintf("  endpoint : %s", url)))
-	m.appendLine(styleDim.Render(fmt.Sprintf("  llm      : %s", llmName)))
-	m.appendLine("")
-	m.appendLine("A hamrpass is a prepaid pot of budget for our hosted, agent")
-	m.appendLine("tuned model. No subscription, no expiry, no rate limits. The")
-	m.appendLine("pass simply runs out when the budget is spent. Top up at")
-	m.appendLine("https://codehamr.com.")
-	m.appendLine("")
-	m.appendLine(styleDim.Render("To activate:"))
-	m.appendLine(styleDim.Render("  /hamrpass <your key>            paste here, switches active profile"))
-	m.appendLine(styleDim.Render("  or edit .codehamr/config.yaml   set models.hamrpass.key directly"))
-	m.appendLine("")
-	m.appendLine(styleDim.Render("Once set, the remaining pass percentage appears in the status bar."))
-}
+// cmdImport reads hamr_session_export.md from the project root, loads its
+// contents as a user message into history, and deletes the file.
+func (m Model) cmdImport(_ []string) (tea.Model, tea.Cmd) {
+	projectRoot := filepath.Dir(m.cfg.Dir)
+	path := filepath.Join(projectRoot, "hamr_session_export.md")
 
-// activateHamrpass writes the key onto the hamrpass profile (seeding the entry
-// if the user removed it from config.yaml), switches active, rebuilds the
-// client, and runs the shared confirmation (probe path, since hamrpass now has
-// a key).
-func (m *Model) activateHamrpass(key string) tea.Cmd {
-	hp := m.cfg.EnsureHamrpass()
-	hp.Key = key
-	if err := m.cfg.SetActive("hamrpass"); err != nil {
-		m.appendLine(styleError.Render("⚠ " + err.Error()))
-		return nil
+	data, err := os.ReadFile(path)
+	if err != nil {
+		m.appendLine(styleError.Render("⚠ import failed: no hamr_session_export.md found at project root"))
+		return m, nil
 	}
-	m.rebuildClient()
-	return m.confirmActive("hamrpass")
+
+	content := string(data)
+	m.history = append(m.history, chmctx.Message{Role: chmctx.RoleUser, Content: content})
+
+	if err := os.Remove(path); err != nil {
+		m.appendLine(styleWarn.Render("⚠ imported but could not delete file: " + err.Error()))
+	} else {
+		m.appendLine(styleOK.Render("✓ imported hamr_session_export.md into context"))
+	}
+	return m, nil
 }
