@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/codehamr/codehamr/internal/cloud"
-	chmctx "github.com/codehamr/codehamr/internal/ctx"
+	"github.com/jbramnick/codehamr/internal/cloud"
+	chmctx "github.com/jbramnick/codehamr/internal/ctx"
 )
 
 func collect(ch <-chan Event) []Event {

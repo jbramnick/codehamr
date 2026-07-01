@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,11 +15,11 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/codehamr/codehamr/internal/cloud"
-	"github.com/codehamr/codehamr/internal/config"
-	chmctx "github.com/codehamr/codehamr/internal/ctx"
-	"github.com/codehamr/codehamr/internal/llm"
-	"github.com/codehamr/codehamr/internal/tools"
+	"github.com/jbramnick/codehamr/internal/cloud"
+	"github.com/jbramnick/codehamr/internal/config"
+	chmctx "github.com/jbramnick/codehamr/internal/ctx"
+	"github.com/jbramnick/codehamr/internal/llm"
+	"github.com/jbramnick/codehamr/internal/tools"
 )
 
 const (
@@ -1236,10 +1237,19 @@ func (m *Model) maybeVerifyNudge() bool {
 func (m Model) cursorOnFirstLine() bool { return m.ta.Line() == 0 }
 func (m Model) cursorOnLastLine() bool  { return m.ta.Line() == m.ta.LineCount()-1 }
 
-// buildSystem appends the working-directory anchor to the embedded system
-// prompt so "hier" / "here" resolves to a concrete path.
+// buildSystem assembles the full system message: embedded prompt, optional
+// AGENTS.md from the project root, and the working-directory anchor. If an
+// AGENTS.md exists at <projectRoot>/AGENTS.md its contents are injected between
+// the embedded prompt and the directory anchor so the agent sees repo-specific
+// instructions every session. Missing or unreadable files are silently skipped.
 func buildSystem(projectDir string) string {
-	return config.DefaultSystemPrompt + "\n\nWorking directory: " + projectDir
+	b := config.DefaultSystemPrompt
+
+	if data, err := os.ReadFile(filepath.Join(projectDir, "AGENTS.md")); err == nil && len(data) > 0 {
+		b += "\n\n" + string(data)
+	}
+
+	return b + "\n\nWorking directory: " + projectDir
 }
 
 // pingBackend issues a short GET to baseURL/v1/models via cloud.Reachable. Any

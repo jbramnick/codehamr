@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	chmctx "github.com/codehamr/codehamr/internal/ctx"
+	chmctx "github.com/jbramnick/codehamr/internal/ctx"
 )
 
 func TestReadFileHappy(t *testing.T) {

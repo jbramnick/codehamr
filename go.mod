@@ -1,4 +1,4 @@
-module github.com/codehamr/codehamr
+module github.com/jbramnick/codehamr
 
 go 1.26
 

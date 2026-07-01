@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	chmctx "github.com/codehamr/codehamr/internal/ctx"
+	chmctx "github.com/jbramnick/codehamr/internal/ctx"
 )
 
 func TestBashEchoesStdout(t *testing.T) {

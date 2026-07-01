@@ -9,9 +9,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/codehamr/codehamr/internal/cloud"
-	"github.com/codehamr/codehamr/internal/config"
-	"github.com/codehamr/codehamr/internal/llm"
+	"github.com/jbramnick/codehamr/internal/cloud"
+	"github.com/jbramnick/codehamr/internal/config"
+	"github.com/jbramnick/codehamr/internal/llm"
 )
 
 // argOption is one popover entry, used at command-level (one row per command)

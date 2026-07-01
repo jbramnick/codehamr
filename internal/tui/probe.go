@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/codehamr/codehamr/internal/cloud"
-	"github.com/codehamr/codehamr/internal/llm"
+	"github.com/jbramnick/codehamr/internal/cloud"
+	"github.com/jbramnick/codehamr/internal/llm"
 )
 
 // probeTimeout caps the activation hello-world request: long enough for a cold

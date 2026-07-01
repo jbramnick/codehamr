@@ -3,14 +3,14 @@
 # user-writable prefix so sudo is never needed for the default flow.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/codehamr/codehamr/main/install.sh | bash
-#   curl -fsSL https://raw.githubusercontent.com/codehamr/codehamr/main/install.sh | PREFIX=/usr/local bash
+#   curl -fsSL https://raw.githubusercontent.com/jbramnick/codehamr/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/jbramnick/codehamr/main/install.sh | PREFIX=/usr/local bash
 
 set -euo pipefail
 
 clear
 
-REPO="codehamr/codehamr"
+REPO="jbramnick/codehamr"
 
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$os" in

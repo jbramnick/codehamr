@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/codehamr/codehamr/internal/config"
+	"github.com/jbramnick/codehamr/internal/config"
 )
 
 // TestEmbeddedPromptFitsFixedSystem guards the invariant the packer relies on:

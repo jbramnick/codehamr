@@ -6,10 +6,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/codehamr/codehamr/internal/cloud"
-	chmctx "github.com/codehamr/codehamr/internal/ctx"
-	"github.com/codehamr/codehamr/internal/llm"
-	"github.com/codehamr/codehamr/internal/tools"
+	"github.com/jbramnick/codehamr/internal/cloud"
+	chmctx "github.com/jbramnick/codehamr/internal/ctx"
+	"github.com/jbramnick/codehamr/internal/llm"
+	"github.com/jbramnick/codehamr/internal/tools"
 )
 
 // streamEventMsg and streamClosedMsg tag their originating channel so the model

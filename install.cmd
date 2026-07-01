@@ -3,15 +3,15 @@ REM codehamr Windows installer: fetch the latest release binary and install it
 REM into a user-writable prefix so admin elevation is never needed.
 REM
 REM Usage (cmd.exe):
-REM   curl -fsSL https://raw.githubusercontent.com/codehamr/codehamr/main/install.cmd -o install.cmd ^&^& install.cmd
+REM   curl -fsSL https://raw.githubusercontent.com/jbramnick/codehamr/main/install.cmd -o install.cmd ^&^& install.cmd
 REM
 REM Usage (PowerShell):
-REM   iwr -useb https://raw.githubusercontent.com/codehamr/codehamr/main/install.cmd -outfile install.cmd; .\install.cmd
+REM   iwr -useb https://raw.githubusercontent.com/jbramnick/codehamr/main/install.cmd -outfile install.cmd; .\install.cmd
 
 setlocal enabledelayedexpansion
 cls
 
-set "REPO=codehamr/codehamr"
+set "REPO=jbramnick/codehamr"
 
 REM --- Detect arch. PROCESSOR_ARCHITEW6432 catches the 32-bit-cmd-on-64-bit-OS case.
 set "arch="

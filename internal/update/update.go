@@ -35,11 +35,11 @@ import (
 // Direct CDN download, no GitHub API call, so no rate limit even for users
 // who start many sessions. var not const so tests can point it at an httptest
 // server; production never reassigns it.
-var checksumsURL = "https://github.com/codehamr/codehamr/releases/latest/download/codehamr_checksums.txt"
+var checksumsURL = "https://github.com/jbramnick/codehamr/releases/latest/download/codehamr_checksums.txt"
 
 // releaseBase is the "latest" redirect for individual binary assets; combined
 // with an assetName to form the download URL in Apply.
-var releaseBase = "https://github.com/codehamr/codehamr/releases/latest/download/"
+var releaseBase = "https://github.com/jbramnick/codehamr/releases/latest/download/"
 
 // fetchTimeout bounds the checksums.txt GET so a silent network can't extend
 // startup.

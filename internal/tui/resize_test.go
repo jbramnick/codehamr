@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/codehamr/codehamr/internal/config"
-	"github.com/codehamr/codehamr/internal/llm"
+	"github.com/jbramnick/codehamr/internal/config"
+	"github.com/jbramnick/codehamr/internal/llm"
 )
 
 // TestResizeKeepsPromptInsideTerminal: across a resize sequence View must

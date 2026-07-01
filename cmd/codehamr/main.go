@@ -12,10 +12,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/codehamr/codehamr/internal/config"
-	"github.com/codehamr/codehamr/internal/llm"
-	"github.com/codehamr/codehamr/internal/tui"
-	"github.com/codehamr/codehamr/internal/update"
+	"github.com/jbramnick/codehamr/internal/config"
+	"github.com/jbramnick/codehamr/internal/llm"
+	"github.com/jbramnick/codehamr/internal/tui"
+	"github.com/jbramnick/codehamr/internal/update"
 )
 
 // updateBudget caps the pre-launch auto-update (checksum fetch + download +

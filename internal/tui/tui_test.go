@@ -17,11 +17,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/codehamr/codehamr/internal/cloud"
-	"github.com/codehamr/codehamr/internal/config"
-	chmctx "github.com/codehamr/codehamr/internal/ctx"
-	"github.com/codehamr/codehamr/internal/llm"
-	"github.com/codehamr/codehamr/internal/tools"
+	"github.com/jbramnick/codehamr/internal/cloud"
+	"github.com/jbramnick/codehamr/internal/config"
+	chmctx "github.com/jbramnick/codehamr/internal/ctx"
+	"github.com/jbramnick/codehamr/internal/llm"
+	"github.com/jbramnick/codehamr/internal/tools"
 )
 
 // newTestModel wires a model against a mock OpenAI SSE server so we can

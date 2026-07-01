@@ -10,8 +10,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	chmctx "github.com/codehamr/codehamr/internal/ctx"
-	"github.com/codehamr/codehamr/internal/llm"
+	chmctx "github.com/jbramnick/codehamr/internal/ctx"
+	"github.com/jbramnick/codehamr/internal/llm"
 )
 
 // TestQueueStoresPromptMidTurn: Enter while a turn is running stashes the typed
