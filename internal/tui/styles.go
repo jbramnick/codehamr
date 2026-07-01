@@ -4,7 +4,7 @@ import "github.com/charmbracelet/lipgloss"
 
 // hamrColor is the single accent, "hot iron under the hammer". One colour for
 // every deliberate highlight; everything else is default, dim, or warn/error.
-var hamrColor = lipgloss.Color("208")
+var hamrColor = lipgloss.Color("117")
 
 var (
 	// Accent for "this is yours / an action": textarea marker, confirmations,
