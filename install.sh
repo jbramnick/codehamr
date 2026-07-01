@@ -16,14 +16,14 @@ os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$os" in
   linux)  ;;
   darwin) os=macos ;;
-  *) echo "codehamr: unsupported OS: $os (need linux or darwin)" >&2; exit 1 ;;
+  *) echo "jimmyhamr: unsupported OS: $os (need linux or darwin)" >&2; exit 1 ;;
 esac
 
 arch="$(uname -m)"
 case "$arch" in
   x86_64|amd64)  arch=amd64 ;;
   aarch64|arm64) arch=arm64 ;;
-  *) echo "codehamr: unsupported arch: $arch (need amd64 or arm64)" >&2; exit 1 ;;
+  *) echo "jimmyhamr: unsupported arch: $arch (need amd64 or arm64)" >&2; exit 1 ;;
 esac
 
 # Pick install dir. Explicit PREFIX wins. Otherwise prefer a directory that
@@ -49,20 +49,20 @@ else
   [ -z "$bindir" ] && bindir="$HOME/.local/bin"
 fi
 
-binary="codehamr-${os}-${arch}"
+binary="jimmyhamr-${os}-${arch}"
 url="https://github.com/${REPO}/releases/latest/download/${binary}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-echo "▶ codehamr · ${os}/${arch}"
-curl -fsSL "$url" -o "${tmp}/codehamr"
+echo "▶ jimmyhamr · ${os}/${arch}"
+curl -fsSL "$url" -o "${tmp}/jimmyhamr"
 
 install -d "${bindir}" 2>/dev/null \
-  || { echo "codehamr: cannot create ${bindir} · pick a writable PREFIX, e.g. PREFIX=\$HOME/.local bash" >&2; exit 1; }
-install -m 0755 "${tmp}/codehamr" "${bindir}/codehamr" 2>/dev/null \
-  || { echo "codehamr: cannot write ${bindir}/codehamr · pick a writable PREFIX, e.g. PREFIX=\$HOME/.local bash" >&2; exit 1; }
+  || { echo "jimmyhamr: cannot create ${bindir} · pick a writable PREFIX, e.g. PREFIX=\$HOME/.local bash" >&2; exit 1; }
+install -m 0755 "${tmp}/jimmyhamr" "${bindir}/jimmyhamr" 2>/dev/null \
+  || { echo "jimmyhamr: cannot write ${bindir}/jimmyhamr · pick a writable PREFIX, e.g. PREFIX=\$HOME/.local bash" >&2; exit 1; }
 
-echo "✓ installed → ${bindir}/codehamr"
+echo "✓ installed → ${bindir}/jimmyhamr"
 
 # If bindir isn't on PATH, append an export to existing shell rc files so
 # future shells pick it up, idempotent via a fixed marker line. The current
@@ -70,7 +70,7 @@ echo "✓ installed → ${bindir}/codehamr"
 # one paste-ready line that activates the install without a terminal restart.
 if ! on_path "$bindir"; then
   line="export PATH=\"${bindir}:\$PATH\""
-  marker="# codehamr-path"
+  marker="# jimmyhamr-path"
   touched=0
   for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile"; do
     [ -f "$rc" ] || continue
@@ -89,9 +89,9 @@ if ! on_path "$bindir"; then
   fi
   echo "    ${line}"
   echo ""
-  echo "  then type 'codehamr' to start hammering"
+  echo "  then type 'jimmyhamr' to start hammering"
 else
   echo ""
-  echo "  type 'codehamr' to start hammering"
+  echo "  type 'jimmyhamr' to start hammering"
 fi
 echo ""

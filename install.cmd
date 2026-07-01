@@ -19,7 +19,7 @@ if /I "%PROCESSOR_ARCHITECTURE%"=="AMD64" set "arch=amd64"
 if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "arch=arm64"
 if /I "%PROCESSOR_ARCHITEW6432%"=="AMD64" set "arch=amd64"
 if not defined arch (
-  echo codehamr: unsupported arch: %PROCESSOR_ARCHITECTURE% ^(need amd64 or arm64^) 1>&2
+  echo jimmyhamr: unsupported arch: %PROCESSOR_ARCHITECTURE% ^(need amd64 or arm64^) 1>&2
   exit /b 1
 )
 
@@ -28,17 +28,17 @@ REM     the conventional per-user install root that never needs admin rights.
 if defined PREFIX (
   set "bindir=%PREFIX%\bin"
 ) else (
-  set "bindir=%LOCALAPPDATA%\Programs\codehamr\bin"
+  set "bindir=%LOCALAPPDATA%\Programs\jimmyhamr\bin"
 )
 
-set "binary=codehamr-windows-%arch%.exe"
+set "binary=jimmyhamr-windows-%arch%.exe"
 set "url=https://github.com/%REPO%/releases/latest/download/%binary%"
 
-echo [codehamr] windows/%arch%
+echo [jimmyhamr] windows/%arch%
 
 if not exist "%bindir%" mkdir "%bindir%" 2>nul
 if not exist "%bindir%" (
-  echo codehamr: cannot create %bindir% 1>&2
+  echo jimmyhamr: cannot create %bindir% 1>&2
   exit /b 1
 )
 
@@ -46,16 +46,16 @@ REM --- Download. curl.exe ships with Windows 10 1803+ / 11; fall back to PowerS
 REM     (Invoke-WebRequest) on older boxes so a single script covers both.
 where curl >nul 2>&1
 if %errorlevel%==0 (
-  curl -fsSL "%url%" -o "%bindir%\codehamr.exe"
+  curl -fsSL "%url%" -o "%bindir%\jimmyhamr.exe"
 ) else (
-  powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -UseBasicParsing -Uri '%url%' -OutFile '%bindir%\codehamr.exe' } catch { exit 1 }"
+  powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -UseBasicParsing -Uri '%url%' -OutFile '%bindir%\jimmyhamr.exe' } catch { exit 1 }"
 )
 if errorlevel 1 (
-  echo codehamr: download failed 1>&2
+  echo jimmyhamr: download failed 1>&2
   exit /b 1
 )
 
-echo [ok] installed -^> %bindir%\codehamr.exe
+echo [ok] installed -^> %bindir%\jimmyhamr.exe
 
 REM --- Ensure bindir is on the user's persistent PATH.
 REM     Read HKCU\Environment\Path directly. Using %PATH% here would be wrong:
@@ -79,7 +79,7 @@ if defined needs_setx (
   echo   added %bindir% to user PATH ^(persists for new shells^)
 )
 
-REM --- Patch the LIVE session PATH so cmd.exe users can run codehamr immediately
+REM --- Patch the LIVE session PATH so cmd.exe users can run jimmyhamr immediately
 REM     without opening a new terminal. Propagated past `endlocal` via the standard
 REM     `endlocal ^& set` idiom (PATH is captured at parse time, then restored to
 REM     the parent scope). This will NOT reach a parent PowerShell process if the
@@ -89,8 +89,8 @@ echo ;%PATH%; | findstr /I /C:";%bindir%;" >nul
 if errorlevel 1 set "PATH=%bindir%;%PATH%"
 
 echo.
-echo   type 'codehamr' to start hammering
-echo   ^(open a new terminal first if 'codehamr' isn't found^)
+echo   type 'jimmyhamr' to start hammering
+echo   ^(open a new terminal first if 'jimmyhamr' isn't found^)
 echo.
 
 endlocal & set "PATH=%PATH%"
