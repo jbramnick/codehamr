@@ -14,11 +14,12 @@ import (
 // once at startup, pushed into scrollback via tea.Println; it scrolls up
 // naturally as content arrives, so View() needs no hide-on-first-content branch.
 var splashCode = []string{
-	" ██████  ██████  ██████   ███████ ",
-	"██      ██    ██ ██   ██  ██      ",
-	"██      ██    ██ ██   ██  █████   ",
-	"██      ██    ██ ██   ██  ██      ",
-	" ██████  ██████  ██████   ███████ ",
+	"     ██╗██╗███╗   ███╗███╗   ███╗██╗   ██╗",
+	"     ██║██║████╗ ████║████╗ ████║╚██╗ ██╔╝",
+	"     ██║██║██╔████╔██║██╔████╔██║ ╚████╔╝ ",
+	"██   ██║██║██║╚██╔╝██║██║╚██╔╝██║  ╚██╔╝  ",
+	"╚█████╔╝██║██║ ╚═╝ ██║██║ ╚═╝ ██║   ██║   ",
+	" ╚════╝ ╚═╝╚═╝     ╚═╝╚═╝     ╚═╝   ╚═╝   ",
 }
 
 var splashHamr = []string{
@@ -27,6 +28,7 @@ var splashHamr = []string{
 	"███████ ███████ ██ ████ ██ ██████  ",
 	"██   ██ ██   ██ ██  ██  ██ ██   ██ ",
 	"██   ██ ██   ██ ██      ██ ██   ██ ",
+	"                                   ",
 }
 
 // appendLine queues a styled line for tea.Println on the next Update cycle,
@@ -272,10 +274,10 @@ func (m Model) splashLines() []string {
 		}
 		lines = append(lines,
 			"", styleDim.Render("  It's hamr time!"),
-			"", styleDim.Render(fmt.Sprintf("  codehamr %s · %s @ %s",
+			"", styleDim.Render(fmt.Sprintf("  jimmyhamr %s · %s @ %s",
 				m.Version, m.cfg.ActiveProfile().LLM, m.cfg.Active)),
 			"",
-			styleDim.Render("  AI systems can make mistakes. Codehamr executes their commands with full shell and filesystem access."),
+			styleDim.Render("  AI systems can make mistakes. Jimmyhamr executes their commands with full shell and filesystem access."),
 			styleDim.Render("  Run inside a devcontainer or VM where it cannot cause damage outside the sandbox."),
 			"",
 		)
@@ -283,7 +285,7 @@ func (m Model) splashLines() []string {
 	}
 	return []string{
 		"",
-		styleHamr.Render("  codehamr"),
+		styleHamr.Render("  jimmyhamr"),
 		styleDim.Render(fmt.Sprintf("  %s · %s @ %s",
 			m.Version, m.cfg.ActiveProfile().LLM, m.cfg.Active)),
 		"",

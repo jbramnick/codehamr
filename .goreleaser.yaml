@@ -2,7 +2,7 @@ version: 2
 
 builds:
   - main: ./cmd/codehamr
-    binary: codehamr
+    binary: jimmyhamr
     # Force static linking on every target. goreleaser v2 inherits the runner's
     # ambient env, so the NATIVE amd64 build on a gcc-equipped runner would link
     # CGO=1/dynamic (glibc-versioned) while the cross builds get CGO=0/static,
@@ -23,10 +23,10 @@ builds:
 
 archives:
   - formats: [binary]
-    name_template: "codehamr-{{ if eq .Os \"darwin\" }}macos{{ else }}{{ .Os }}{{ end }}-{{ .Arch }}"
+    name_template: "jimmyhamr-{{ if eq .Os \"darwin\" }}macos{{ else }}{{ .Os }}{{ end }}-{{ .Arch }}"
 
 checksum:
-  name_template: "codehamr_checksums.txt"
+  name_template: "jimmyhamr_checksums.txt"
   algorithm: sha256
 
 changelog:

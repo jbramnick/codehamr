@@ -2762,7 +2762,7 @@ func TestSplashEmittedOnFirstSize(t *testing.T) {
 	if !strings.Contains(joined, "hamr") {
 		t.Fatalf("splash should be queued on first size: %s", joined)
 	}
-	if !strings.Contains(joined, "codehamr test") {
+	if !strings.Contains(joined, "jimmyhamr test") {
 		t.Fatalf("splash should carry version/profile line: %s", joined)
 	}
 	if !strings.Contains(joined, "AI systems can make mistakes") {

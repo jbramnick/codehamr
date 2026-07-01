@@ -31,7 +31,7 @@ func newFakeRelease(t *testing.T, asset string, body []byte, declared string) *f
 		switch req.URL.Path {
 		case "/" + asset:
 			_, _ = w.Write(body)
-		case "/codehamr_checksums.txt":
+		case "/jimmyhamr_checksums.txt":
 			_, _ = w.Write([]byte(r.manifest))
 		default:
 			http.NotFound(w, req)
@@ -47,7 +47,7 @@ func withReleaseURLs(t *testing.T, base string) {
 	t.Helper()
 	origCS := checksumsURL
 	origBase := releaseBase
-	checksumsURL = base + "/codehamr_checksums.txt"
+	checksumsURL = base + "/jimmyhamr_checksums.txt"
 	releaseBase = base + "/"
 	t.Cleanup(func() {
 		checksumsURL = origCS
@@ -85,7 +85,7 @@ func TestApplyRejectsChecksumMismatch(t *testing.T) {
 	withReleaseURLs(t, r.srv.URL)
 
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	if err := os.WriteFile(exec, []byte("original\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestApplyRestoresBinaryWhenPromoteFails(t *testing.T) {
 	t.Cleanup(func() { promoteRename = orig })
 
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	const originalBytes = "the original running binary\n"
 	if err := os.WriteFile(exec, []byte(originalBytes), 0o755); err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestApplyRestoresBinaryWhenPromoteFails(t *testing.T) {
 		t.Fatalf("execPath not restored to the original binary: got %q", got)
 	}
 	// No half-written temp file should leak.
-	if matches, _ := filepath.Glob(filepath.Join(tmpDir, ".codehamr-update-*")); len(matches) != 0 {
+	if matches, _ := filepath.Glob(filepath.Join(tmpDir, ".jimmyhamr-update-**")); len(matches) != 0 {
 		t.Fatalf("temp file leaked after failed promote: %+v", matches)
 	}
 }
@@ -157,7 +157,7 @@ func TestApplyReportsRestoreFailure(t *testing.T) {
 	withReleaseURLs(t, r.srv.URL)
 
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	if err := os.WriteFile(exec, []byte("the original running binary\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestApplyAcceptsMatchingChecksum(t *testing.T) {
 	withReleaseURLs(t, r.srv.URL)
 
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	if err := os.WriteFile(exec, []byte("old\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestApplyAcceptsMatchingChecksum(t *testing.T) {
 		t.Fatalf("exec should be executable, got mode %v", st.Mode())
 	}
 	// Temp file must be cleaned up.
-	matches, _ := filepath.Glob(filepath.Join(tmpDir, ".codehamr-update-*"))
+	matches, _ := filepath.Glob(filepath.Join(tmpDir, ".jimmyhamr-update-**"))
 	if len(matches) != 0 {
 		t.Fatalf("temp file leaked after successful Apply: %+v", matches)
 	}
@@ -221,13 +221,13 @@ func TestApplyRejectsMissingManifestEntry(t *testing.T) {
 	asset := platformAsset(t)
 	body := []byte("would-be binary\n")
 	// declare a hash for a DIFFERENT asset name so fetchHash returns ""
-	other := "codehamr-not-our-asset"
+	other := "jimmyhamr-not-our-asset"
 	r := newFakeRelease(t, asset, body, hashOf(body))
 	r.manifest = fmt.Sprintf("%s  %s\n", hashOf(body), other) // no entry for `asset`
 	withReleaseURLs(t, r.srv.URL)
 
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	if err := os.WriteFile(exec, []byte("o\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -257,14 +257,14 @@ func TestApplyCleansTempOnFailure(t *testing.T) {
 	withReleaseURLs(t, srv.URL)
 
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	if err := os.WriteFile(exec, []byte("o\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := Apply(context.Background(), exec); err == nil {
 		t.Fatal("Apply must error on download failure")
 	}
-	matches, _ := filepath.Glob(filepath.Join(tmpDir, ".codehamr-update-*"))
+	matches, _ := filepath.Glob(filepath.Join(tmpDir, ".jimmyhamr-update-**"))
 	if len(matches) != 0 {
 		t.Fatalf("temp file leaked after failed Apply: %+v", matches)
 	}
@@ -278,10 +278,10 @@ func TestFetchHashHandlesCorruptManifest(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	origCS := checksumsURL
-	checksumsURL = srv.URL + "/codehamr_checksums.txt"
+	checksumsURL = srv.URL + "/jimmyhamr_checksums.txt"
 	t.Cleanup(func() { checksumsURL = origCS })
 
-	got, err := fetchHash(context.Background(), "codehamr-linux-amd64")
+	got, err := fetchHash(context.Background(), "jimmyhamr-linux-amd64")
 	if err != nil {
 		t.Fatalf("corrupt manifest should not error, got: %v", err)
 	}
@@ -307,12 +307,12 @@ func TestAssetNameCoversEveryReleasedPlatform(t *testing.T) {
 	cases := []struct {
 		goos, goarch, want string
 	}{
-		{"linux", "amd64", "codehamr-linux-amd64"},
-		{"linux", "arm64", "codehamr-linux-arm64"},
-		{"darwin", "amd64", "codehamr-macos-amd64"},
-		{"darwin", "arm64", "codehamr-macos-arm64"},
-		{"windows", "amd64", "codehamr-windows-amd64.exe"},
-		{"windows", "arm64", "codehamr-windows-arm64.exe"},
+		{"linux", "amd64", "jimmyhamr-linux-amd64"},
+		{"linux", "arm64", "jimmyhamr-linux-arm64"},
+		{"darwin", "amd64", "jimmyhamr-macos-amd64"},
+		{"darwin", "arm64", "jimmyhamr-macos-arm64"},
+		{"windows", "amd64", "jimmyhamr-windows-amd64.exe"},
+		{"windows", "arm64", "jimmyhamr-windows-arm64.exe"},
 	}
 	for _, c := range cases {
 		got, ok := assetName(c.goos, c.goarch)
@@ -351,7 +351,7 @@ func TestAssetNameRejectsUnreleasedPlatform(t *testing.T) {
 func TestCheckReportsUpToDate(t *testing.T) {
 	asset := platformAsset(t)
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	body := []byte("running binary content\n")
 	if err := os.WriteFile(exec, body, 0o755); err != nil {
 		t.Fatal(err)
@@ -370,7 +370,7 @@ func TestCheckReportsUpToDate(t *testing.T) {
 func TestCheckReportsStale(t *testing.T) {
 	asset := platformAsset(t)
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	if err := os.WriteFile(exec, []byte("local v1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestApplyKeepsPreviousBinaryAsOld(t *testing.T) {
 	withReleaseURLs(t, r.srv.URL)
 
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	if err := os.WriteFile(exec, oldBody, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +427,7 @@ func TestApplyKeepsPreviousBinaryAsOld(t *testing.T) {
 // the previous process exits, so cleanup must run at launch, not at Apply's end.
 func TestCleanupOldRemovesStaleFile(t *testing.T) {
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	stale := exec + ".old"
 	if err := os.WriteFile(stale, []byte("previous"), 0o755); err != nil {
 		t.Fatal(err)
@@ -442,7 +442,7 @@ func TestCleanupOldRemovesStaleFile(t *testing.T) {
 // when there is no .old file, the steady state once an update has settled.
 func TestCleanupOldNoopWhenMissing(t *testing.T) {
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	CleanupOld(exec) // must not panic, must not log
 }
 
@@ -455,7 +455,7 @@ func TestApplyRespectsContextCancel(t *testing.T) {
 	withReleaseURLs(t, r.srv.URL)
 
 	tmpDir := t.TempDir()
-	exec := filepath.Join(tmpDir, "codehamr")
+	exec := filepath.Join(tmpDir, "jimmyhamr")
 	original := []byte("origcontents\n")
 	if err := os.WriteFile(exec, original, 0o755); err != nil {
 		t.Fatal(err)

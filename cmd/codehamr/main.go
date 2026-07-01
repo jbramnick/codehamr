@@ -30,7 +30,7 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "-v", "--version", "version":
-			fmt.Println("codehamr", version)
+			fmt.Println("jimmyhamr", version)
 			return
 		case "-h", "--help", "help":
 			printHelp()
@@ -56,7 +56,7 @@ func main() {
 	// draws, so there's nothing to announce.
 	cfg, _, err := config.Bootstrap(cwd)
 	if err != nil {
-		log.Fatalf("codehamr: %v", err)
+		log.Fatalf("jimmyhamr: %v", err)
 	}
 	applyEnvOverrides(cfg)
 
@@ -89,17 +89,17 @@ func main() {
 	// xterm.js hosts (VS Code) leak those bytes as runes into the textarea
 	// on every window switch, inflating prompt height with invisible chars.
 	if _, err := tea.NewProgram(m, tea.WithReportFocus()).Run(); err != nil {
-		log.Fatalf("codehamr: %v", err)
+		log.Fatalf("jimmyhamr: %v", err)
 	}
 }
 
 func printHelp() {
 	fmt.Println(strings.TrimSpace(`
-codehamr, a lightweight, fast coding agent for the terminal.
+jimmyhamr, a lightweight, fast coding agent for the terminal.
 
 Usage:
-  codehamr             start interactive TUI
-  codehamr --version   print version
+  jimmyhamr            start interactive TUI
+  jimmyhamr --version      print version
 
 Slash commands (inside TUI):`))
 	tui.PrintHelp(os.Stdout)
@@ -146,7 +146,7 @@ func maybeSelfUpdate() {
 	if !update.Check(ctx, exe) {
 		return
 	}
-	fmt.Fprintln(os.Stderr, "◉ applying codehamr update...")
+	fmt.Fprintln(os.Stderr, "◉ applying jimmyhamr update...")
 	if err := update.Apply(ctx, exe); err != nil {
 		fmt.Fprintf(os.Stderr, "⚠ update failed: %v\n", err)
 		if os.IsPermission(err) {
@@ -174,7 +174,7 @@ func maybeSelfUpdate() {
 func mustCwd() string {
 	cwd, err := os.Getwd()
 	if err != nil {
-		log.Fatalf("codehamr: %v", err)
+		log.Fatalf("jimmyhamr: %v", err)
 	}
 	return cwd
 }
