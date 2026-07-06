@@ -101,6 +101,70 @@ func TestExecuteWriteFileWrapsResult(t *testing.T) {
 	}
 }
 
+// TestExecuteWriteFileRefusesMissingContent: valid-JSON args with no string
+// "content" ({"path": ...} alone, or "content": null) must not decode to ""
+// and silently truncate an existing file to 0 bytes behind a success-shaped
+// result. An explicit "content": "" still writes (intentional empty file).
+func TestExecuteWriteFileRefusesMissingContent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keep.go")
+	if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, args := range map[string]map[string]any{
+		"content key absent": {"path": path},
+		"content null":       {"path": path, "content": nil},
+	} {
+		msg := Execute(context.Background(), chmctx.ToolCall{Name: "write_file", Arguments: args})
+		if !strings.HasPrefix(msg.Content, "(missing content argument") {
+			t.Fatalf("%s: want refusal, got %q", name, msg.Content)
+		}
+		got, _ := os.ReadFile(path)
+		if string(got) != "package main\n" {
+			t.Fatalf("%s: existing file was destroyed: %q", name, got)
+		}
+	}
+	// Explicit empty string is a deliberate empty write and must still pass.
+	msg := Execute(context.Background(), chmctx.ToolCall{
+		Name: "write_file", Arguments: map[string]any{"path": path, "content": ""},
+	})
+	if !strings.Contains(msg.Content, "wrote 0 bytes") {
+		t.Fatalf("explicit empty content must write, got %q", msg.Content)
+	}
+}
+
+// TestExecuteEditFileRefusesMissingNewString: same guard as write_file's
+// content - a dropped new_string must not decode to "" and silently delete
+// the matched text. An explicit "new_string": "" still deletes.
+func TestExecuteEditFileRefusesMissingNewString(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	if err := os.WriteFile(path, []byte("keep THIS bit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	msg := Execute(context.Background(), chmctx.ToolCall{
+		Name: "edit_file", Arguments: map[string]any{"path": path, "old_string": "THIS "},
+	})
+	if !strings.HasPrefix(msg.Content, "(missing new_string argument") {
+		t.Fatalf("want refusal, got %q", msg.Content)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "keep THIS bit" {
+		t.Fatalf("file was edited despite refusal: %q", got)
+	}
+
+	msg = Execute(context.Background(), chmctx.ToolCall{
+		Name: "edit_file", Arguments: map[string]any{"path": path, "old_string": "THIS ", "new_string": ""},
+	})
+	if !strings.Contains(msg.Content, "edited") {
+		t.Fatalf("explicit empty new_string must delete the match, got %q", msg.Content)
+	}
+	got, _ = os.ReadFile(path)
+	if string(got) != "keep bit" {
+		t.Fatalf("explicit deletion wrong: %q", got)
+	}
+}
+
 func TestInlineStatusWriteFile(t *testing.T) {
 	s := InlineStatus(chmctx.ToolCall{
 		Name:      "write_file",

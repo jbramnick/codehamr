@@ -32,6 +32,26 @@ func makePaste(n int) string {
 	return strings.Join(parts, "\n")
 }
 
+// TestSetCursorRuneOffsetCrossesSoftWrappedLine: walking to a target row must
+// traverse a soft-wrapped logical line in between. bubbles' CursorUp inside a
+// soft-wrapped line changes only the visual position, not Line(), so a bail
+// keyed on Line() alone reads that as "step did nothing" and strands the
+// cursor on the wrong logical row (the audit bug: deleting a chip above a
+// soft-wrapped line dropped the cursor into the user's instruction text).
+func TestSetCursorRuneOffsetCrossesSoftWrappedLine(t *testing.T) {
+	p := newPromptInput()
+	p.SetWidth(20)
+	p.SetHeight(20)
+	// Row 1 soft-wraps into several visual rows at width 20.
+	p.SetValue("short\n" + strings.Repeat("a", 100) + "\ntail line")
+	p.ta.CursorEnd() // start at the bottom, target near the top
+
+	p.setCursorRuneOffset(2)
+	if got := p.cursorRuneOffset(); got != 2 {
+		t.Fatalf("cursor landed at rune offset %d, want 2 (walk bailed inside the soft-wrapped row)", got)
+	}
+}
+
 // TestSmallPasteStaysInline: a paste below threshold stays raw, no chip.
 func TestSmallPasteStaysInline(t *testing.T) {
 	p := newChippablePrompt()

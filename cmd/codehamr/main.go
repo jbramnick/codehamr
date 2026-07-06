@@ -19,9 +19,13 @@ import (
 )
 
 // updateBudget caps the pre-launch auto-update (checksum fetch + download +
-// rename): enough for a ~10MB binary on a slow link, short enough that an
-// offline user isn't stalled before the TUI appears.
-const updateBudget = 20 * time.Second
+// rename): enough for the real ~16MB binaries on a slow (few-Mbps) link. A
+// too-tight budget is a permanent every-launch degradation, not a one-off:
+// the binary on disk never changes, so each start repeats the stall, the
+// failure banner, and a wasted partial download. Generous is safe because an
+// offline user never gets here (Check's 2s fetchTimeout fails first) and the
+// wait stays Ctrl+C-escapable.
+const updateBudget = 90 * time.Second
 
 // version is injected via -ldflags at build time; "dev" when running `go run`.
 var version = "dev"
@@ -118,11 +122,37 @@ Env:
 }
 
 // isLocalBuild reports whether the binary came from a working tree rather
-// than an official release. `go run` leaves version "dev"; `make install` on
-// a dirty tree adds a "-dirty" suffix. Goreleaser tags read as non-local and
-// still self-update.
+// than an official release. `go run` leaves version "dev"; `make install`
+// injects `git describe --tags --always --dirty`, so a dirty tree carries a
+// "-dirty" suffix, a clean tree past the last tag the describe shape
+// (v0.3.0-5-g5290930), and a tag-less clone a bare short sha. All are local:
+// only an exact release tag (v1.2.3) may self-update, or the updater would
+// silently swap unreleased work for the last published release (its hash
+// never matches the manifest, so it always reads as "stale") on first launch.
 func isLocalBuild(version string) bool {
-	return version == "dev" || strings.HasSuffix(version, "-dirty")
+	if version == "dev" || strings.HasSuffix(version, "-dirty") {
+		return true
+	}
+	// describe-with-commits: anything carrying a "-g<hex>" suffix.
+	if i := strings.LastIndex(version, "-g"); i >= 0 && isHex(version[i+2:]) {
+		return true
+	}
+	// bare `--always` short sha (tag-less clone): all-hex, no tag structure.
+	return len(version) >= 7 && isHex(version)
+}
+
+// isHex reports whether s is non-empty lowercase hex, the shape of a git
+// abbreviated commit hash.
+func isHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // maybeSelfUpdate runs the pre-launch auto-update. No-op for local builds,

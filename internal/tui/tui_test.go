@@ -1501,6 +1501,45 @@ func TestCtrlLClearsPromptNotScrollback(t *testing.T) {
 	}
 }
 
+// TestCtrlLClosesPopover: Ctrl+L clears the popover along with the prompt.
+// Left open on stale suggestions, the next Enter would take the has-selection
+// path and insert a ghost command into the freshly emptied prompt.
+func TestCtrlLClosesPopover(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	o1, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m1 := o1.(Model)
+	if !m1.popoverOpen() {
+		t.Fatal("precondition: typing '/' opens the command popover")
+	}
+
+	o2, _ := m1.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	m2 := o2.(Model)
+	if m2.popoverOpen() {
+		t.Fatal("Ctrl+L must close the popover along with the prompt")
+	}
+	o3, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := o3.(Model).ta.Value(); got != "" {
+		t.Fatalf("Enter after Ctrl+L must be a no-op, got ghost completion %q", got)
+	}
+}
+
+// TestAltEnterInsertsNewline: Alt+Enter composes a multi-line prompt. The
+// alt-flagged KeyEnter ("alt+enter") matches no textarea binding, so the flag
+// must be stripped before forwarding or the key is a silent no-op and
+// multi-line prompts can only be pasted.
+func TestAltEnterInsertsNewline(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	m.ta.SetValue("first line")
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	om := out.(Model)
+	if got := om.ta.Value(); got != "first line\n" {
+		t.Fatalf("Alt+Enter must insert a newline, got %q", got)
+	}
+	if len(om.history) != 0 {
+		t.Fatal("Alt+Enter must not submit the prompt")
+	}
+}
+
 // TestHumanIntFormat: thin-comma formatting must handle the edge cases the
 // activation line cares about: single digits, exact 4-digit, exact powers,
 // and very large windows that would otherwise read as a wall of digits.
@@ -1721,8 +1760,8 @@ func TestToolTargetKey(t *testing.T) {
 // "(cancelled)" result (user Ctrl+C) is never a failure; write/edit fail iff the
 // trimmed result opens with "(" (their error convention); read_file returns raw
 // content on success, which can start with "(", so it fails only on its two
-// real error outputs; bash fails iff it carries "\n(exit: " or "(timeout after ";
-// a clean result is not a failure.
+// real error outputs; bash fails iff it carries "\n(exit: " or "(timeout after "
+// or is exactly "(empty command)"; a clean result is not a failure.
 func TestToolResultFailed(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -1734,7 +1773,9 @@ func TestToolResultFailed(t *testing.T) {
 		{"cancelled file op is not a failure", tools.WriteFileName, "(cancelled)", false},
 		{"bash non-zero exit fails", tools.BashName, "boom\n(exit: exit status 1)", true},
 		{"bash timeout fails", tools.BashName, "slow\n(timeout after 2s)", true},
+		{"bash empty-command fails", tools.BashName, "(empty command)", true},
 		{"bash clean success", tools.BashName, "all green\n", false},
+		{"bash leading-paren output is not a failure", tools.BashName, "(3 rows affected)\n", false},
 		{"write_file error fails", tools.WriteFileName, "(write error: permission denied)", true},
 		{"write_file success", tools.WriteFileName, "wrote 5 bytes to /tmp/x", false},
 		{"edit_file not-found fails", tools.EditFileName, "(not found: old_string)", true},

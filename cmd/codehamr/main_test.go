@@ -5,9 +5,12 @@ import (
 	"testing"
 )
 
-// TestIsLocalBuild pins the contract: `go run` ("dev") and dirty-tree builds
-// are local and skip self-update; else an older release overwrites unreleased
-// work. Clean semver tags still self-update.
+// TestIsLocalBuild pins the contract: `go run` ("dev"), dirty-tree builds,
+// clean-tree builds past the last tag (git describe shape), and tag-less
+// clones (bare short sha) are all local and skip self-update; else the
+// updater downgrades unreleased work to the last published release (a
+// non-release hash always reads as "stale"). Only exact release tags
+// self-update.
 func TestIsLocalBuild(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -16,8 +19,10 @@ func TestIsLocalBuild(t *testing.T) {
 		{"dev", true},
 		{"v1.2.3-dirty", true},
 		{"v0.1.0-5-g1a2b3c4-dirty", true},
+		{"v0.1.0-5-g1a2b3c4", true}, // clean tree, 5 commits past the tag: unreleased work
+		{"5290930", true},           // tag-less clone: `git describe --always` bare sha
 		{"v1.2.3", false},
-		{"v0.1.0-5-g1a2b3c4", false},
+		{"v1.2.3-gamma", false}, // prerelease tag: "-g" but not hex, still a release
 		{"", false},
 	}
 	for _, c := range cases {

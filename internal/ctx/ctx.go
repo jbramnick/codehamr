@@ -153,24 +153,33 @@ func Pack(history []Message, budget int) PackResult {
 	// which the following dropOrphanTools pass then cleans up.
 	kept = dropDanglingToolCalls(kept)
 	kept = dropOrphanTools(kept)
-	// dropOrphanTools can empty the kept set when the newest message is a tool
-	// result whose owning assistant fell just past the budget cut: the always-
-	// keep-newest guard keeps the lone tool, then the orphan drop removes it,
-	// leaving nothing, so the next request would carry only the system prompt
-	// and silently lose the whole conversation mid-turn (reachable on small-ctx
-	// profiles after a big tool output). Recover the newest assistant+tool-results
-	// group whole, over budget if need be, with the same deliberately-over-budget
+	// The cleanup passes can lose the current turn's tool exchange when the
+	// newest tool result's owning assistant fell just past the budget cut: the
+	// budget walk keeps the lone tool result (plus any trailing system nudge),
+	// then the orphan drop removes it, so the next request would silently lose
+	// the whole conversation mid-turn (reachable on small-ctx profiles after a
+	// big tool output). Keyed on "nothing substantive survived", NOT on
+	// len(kept)==0: a failure/runaway nudge (or the empty assistant reply the
+	// empty-reply nudge answers) survives the cleanup as the sole keeper and
+	// would otherwise mask exactly this loss - and nothing substantive
+	// surviving already implies the newest tool result didn't. A surviving
+	// user message or real assistant reply instead means the conversation
+	// moved past the exchange, ordinary budget trimming, no over-budget
+	// resurrection. Recover the newest assistant+tool-results group whole,
+	// over budget if need be, with the same deliberately-over-budget
 	// guarantee a newest user message already gets.
-	if len(kept) == 0 {
+	if i := newestToolIndex(history); i >= 0 && onlyNonSubstantive(kept) {
 		// Recover the group over budget, then re-run the same two passes the
 		// normal path uses: a partially-answered parallel set (owner issued c1,c2
 		// but only c1 came back before an abort) would otherwise reach the wire as
 		// a dangling assistant and 400 every backend. Fully-answered groups pass
-		// through untouched; an unpairable partial empties to nothing, a
-		// well-formed system-only request, not a 400.
-		kept = newestToolGroup(history)
-		kept = dropDanglingToolCalls(kept)
-		kept = dropOrphanTools(kept)
+		// through untouched; an unpairable partial empties to nothing. Survivors
+		// in kept are all newer than the recovered group (the budget walk keeps a
+		// suffix), so prepending keeps the order chronological.
+		group := newestToolGroup(history[:i+1])
+		group = dropDanglingToolCalls(group)
+		group = dropOrphanTools(group)
+		kept = append(group, kept...)
 	}
 	kept = anchorUserMessage(kept, history)
 	kept = demoteSystemMessages(kept)
@@ -271,27 +280,66 @@ search:
 	return group
 }
 
-// dropOrphanTools removes tool messages whose tool_call_id has no matching
-// assistant.tool_calls entry earlier in the slice: sending one alone 400s on
-// every OpenAI-compatible backend ("tool message without preceding
-// tool_calls").
-//
-// Empty IDs are orphans on both ends: otherwise one empty-id assistant call
-// would let every empty-id tool message ride through seen[""], the exact 400
-// we guard against. An unidentifiable tool message has no valid pairing.
-func dropOrphanTools(kept []Message) []Message {
-	seen := map[string]bool{}
-	out := kept[:0]
+// newestToolIndex returns the index of the newest tool-result message in
+// history, or -1. Everything after it can only be non-tool (a system nudge, an
+// assistant summary), so it marks the current turn's newest tool exchange.
+func newestToolIndex(history []Message) int {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == RoleTool {
+			return i
+		}
+	}
+	return -1
+}
+
+// onlyNonSubstantive reports whether kept carries no substantive conversation:
+// only system-role notes (soft nudges) and empty assistant messages (no text,
+// no tool calls - the stall shape the empty-reply nudge answers, appended
+// right before that nudge). Vacuously true for an empty slice.
+func onlyNonSubstantive(kept []Message) bool {
 	for _, m := range kept {
-		if m.Role == RoleAssistant {
+		if m.Role == RoleSystem {
+			continue
+		}
+		if m.Role == RoleAssistant && m.Content == "" && len(m.ToolCalls) == 0 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// dropOrphanTools removes tool messages that are not part of the contiguous
+// tool run answering the assistant directly before them: sending one alone
+// 400s on every OpenAI-compatible backend ("tool message without preceding
+// tool_calls"). Positional like dropDanglingToolCalls, and for the same
+// reason: a "was this ID ever issued" lookup would let a reused index-derived
+// ID ("call_0" on local backends) from an OLDER turn vouch for a stray tool
+// result whose own assistant was dropped, leaving a tool message right after
+// a user message on the wire.
+//
+// Empty IDs are orphans on both ends: an unidentifiable tool message has no
+// valid pairing.
+func dropOrphanTools(kept []Message) []Message {
+	out := kept[:0]
+	// IDs issued by the assistant whose contiguous tool run we're inside;
+	// nil once any non-tool message ends the run.
+	var current map[string]bool
+	for _, m := range kept {
+		switch m.Role {
+		case RoleAssistant:
+			current = map[string]bool{}
 			for _, tc := range m.ToolCalls {
 				if tc.ID != "" {
-					seen[tc.ID] = true
+					current[tc.ID] = true
 				}
 			}
-		}
-		if m.Role == RoleTool && (m.ToolCallID == "" || !seen[m.ToolCallID]) {
-			continue
+		case RoleTool:
+			if m.ToolCallID == "" || !current[m.ToolCallID] {
+				continue
+			}
+		default:
+			current = nil
 		}
 		out = append(out, m)
 	}
@@ -309,15 +357,21 @@ func dropOrphanTools(kept []Message) []Message {
 // assistant would otherwise reach the wire and wedge the conversation until
 // /clear. Empty ids count as unanswered: an unidentifiable call can't be paired.
 func dropDanglingToolCalls(kept []Message) []Message {
-	answered := map[string]bool{}
-	for _, m := range kept {
-		if m.Role == RoleTool && m.ToolCallID != "" {
-			answered[m.ToolCallID] = true
-		}
-	}
 	out := kept[:0]
-	for _, m := range kept {
+	for i, m := range kept {
 		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
+			// Answers must come from the contiguous run of tool messages that
+			// follows THIS assistant, the only shape the wire accepts. A global
+			// ID lookup would let a later turn's reused ID (index-derived
+			// "call_0"-style IDs are common on local backends) vouch for an
+			// aborted call here, sending the dangling assistant to the wire and
+			// wedging the conversation with 400s until /clear.
+			answered := map[string]bool{}
+			for j := i + 1; j < len(kept) && kept[j].Role == RoleTool; j++ {
+				if kept[j].ToolCallID != "" {
+					answered[kept[j].ToolCallID] = true
+				}
+			}
 			dangling := false
 			for _, tc := range m.ToolCalls {
 				if !answered[tc.ID] {

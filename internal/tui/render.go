@@ -49,6 +49,13 @@ func wrapForScrollback(s string, width int) string {
 	if width <= 0 {
 		return s
 	}
+	// Terminals advance a literal tab to the next 8-column stop, but ansi.Wrap
+	// counts it as one cell, so a tab-bearing line (glamour preserves tabs
+	// inside code fences; a user echo can carry pasted ones) passes the width
+	// check yet physically overflows - the exact drift this wrap exists to
+	// prevent. Expand before counting; \t never occurs inside an ANSI escape
+	// sequence, so a plain replace is safe on styled strings.
+	s = strings.ReplaceAll(s, "\t", "    ")
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
 		lines[i] = ansi.Wrap(line, width, "")

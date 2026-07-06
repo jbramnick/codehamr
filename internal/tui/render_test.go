@@ -37,6 +37,28 @@ func TestWrapForScrollbackHardWrapsUnbrokenToken(t *testing.T) {
 	}
 }
 
+// Terminals expand a literal tab to the next 8-column stop while ansi.Wrap
+// counts it as one cell, so a tab-bearing line (glamour preserves tabs inside
+// code fences) could pass the width check yet physically overflow. Tabs must
+// be expanded before counting; none may survive into the output.
+func TestWrapForScrollbackExpandsTabs(t *testing.T) {
+	const width = 20
+	// 3 tabs + 16 chars: 19 counted cells with tab=1 (passes unwrapped), but
+	// 12 + 16 = 28 real cells once expanded - must wrap.
+	out := wrapForScrollback("\t\t\tabcdefghijklmnop", width)
+	if strings.Contains(out, "\t") {
+		t.Fatalf("tabs must not survive into scrollback output: %q", out)
+	}
+	if !strings.Contains(out, "\n") {
+		t.Fatalf("the expanded over-width line must be wrapped: %q", out)
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		if w := ansi.StringWidth(line); w > width {
+			t.Fatalf("expanded line width %d exceeds %d: %q", w, width, line)
+		}
+	}
+}
+
 // width <= 0 (before the first WindowSizeMsg) is a no-op passthrough.
 func TestWrapForScrollbackNoWidthIsNoop(t *testing.T) {
 	s := "▌ some text"

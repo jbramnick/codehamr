@@ -325,6 +325,139 @@ func TestPackDropsDanglingPartialParallelGroup(t *testing.T) {
 	}
 }
 
+// TestPackDropsDanglingAssistantDespiteIDReuse: pairing is positional, not a
+// global ID lookup. Local backends commonly reuse index-derived IDs ("call_0")
+// across turns, so a later turn's answered call must not vouch for an earlier
+// turn's aborted (dangling) assistant - that shape reaches the wire and 400s
+// every backend ("missing tool response") until /clear.
+func TestPackDropsDanglingAssistantDespiteIDReuse(t *testing.T) {
+	history := []Message{
+		{Role: RoleUser, Content: "task"},
+		// Turn 1: aborted mid-tool (Ctrl+C); call_0 never answered.
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call_0", Name: "bash"}}},
+		// Turn 2: the backend reuses call_0; this exchange is complete.
+		{Role: RoleUser, Content: "again"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call_0", Name: "bash"}}},
+		{Role: RoleTool, ToolCallID: "call_0", Content: "ok"},
+		{Role: RoleAssistant, Content: "done"},
+	}
+	r := Pack(history, 100000)
+	owners := 0
+	for i, m := range r.Messages {
+		if m.Role != RoleAssistant || len(m.ToolCalls) == 0 {
+			continue
+		}
+		owners++
+		if i+1 >= len(r.Messages) || r.Messages[i+1].Role != RoleTool {
+			t.Fatalf("turn-1 dangling assistant survived via the reused ID: %+v", r.Messages)
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("exactly the answered assistant must survive, got %d owners: %+v", owners, r.Messages)
+	}
+}
+
+// TestPackRecoversNewestToolGroupPastTrailingNudge: the over-budget recovery
+// for the newest tool exchange must fire even when a failure/runaway nudge was
+// appended after the tool result. The nudge survives the budget walk as the
+// sole keeper, so a bare emptiness check would see "something survived" and
+// silently lose the current turn's exchange from the window.
+func TestPackRecoversNewestToolGroupPastTrailingNudge(t *testing.T) {
+	bigArgs := strings.Repeat("x", 4*5000) // ~5000-token write_file content
+	history := []Message{
+		{Role: RoleUser, Content: "do the thing"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{
+			{ID: "c1", Name: "write_file", Arguments: map[string]any{"content": bigArgs}},
+		}},
+		{Role: RoleTool, ToolCallID: "c1", Content: "(write error: boom)"},
+		{Role: RoleSystem, Content: "nudge: change approach"},
+	}
+	r := Pack(history, 2000) // the owning assistant alone exceeds the budget
+	owner, tool, nudge := -1, -1, -1
+	for i, m := range r.Messages {
+		switch {
+		case m.Role == RoleAssistant && len(m.ToolCalls) > 0:
+			owner = i
+		case m.Role == RoleTool && m.ToolCallID == "c1":
+			tool = i
+		case strings.Contains(m.Content, "change approach"):
+			nudge = i
+		}
+	}
+	if owner < 0 || tool < 0 {
+		t.Fatalf("newest tool exchange lost despite trailing nudge (owner=%d tool=%d): %+v",
+			owner, tool, r.Messages)
+	}
+	// Order must stay chronological: recovered group before the surviving
+	// nudge, or the demoted nudge precedes the exchange it comments on.
+	if !(owner < tool && tool < nudge) {
+		t.Fatalf("recovered group must precede the nudge (owner=%d tool=%d nudge=%d): %+v",
+			owner, tool, nudge, r.Messages)
+	}
+}
+
+// TestPackRecoversNewestToolGroupPastEmptyAssistantTail: the stall shape the
+// empty-reply nudge answers appends an EMPTY assistant message, then the
+// nudge, after the tool result. Both are non-substantive; if the cheap empty
+// assistant (8 tokens) survives the walk it must not mask the recovery, or
+// the wire tells the model to "re-issue the call" it can no longer see.
+func TestPackRecoversNewestToolGroupPastEmptyAssistantTail(t *testing.T) {
+	bigArgs := strings.Repeat("x", 4*5000)
+	history := []Message{
+		{Role: RoleUser, Content: "do the thing"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{
+			{ID: "c1", Name: "write_file", Arguments: map[string]any{"content": bigArgs}},
+		}},
+		{Role: RoleTool, ToolCallID: "c1", Content: strings.Repeat("y", 4*3000)},
+		{Role: RoleAssistant, Content: ""}, // the stall
+		{Role: RoleSystem, Content: "nudge: re-issue the call"},
+	}
+	r := Pack(history, 2000)
+	var hasOwner, hasTool bool
+	for _, m := range r.Messages {
+		if m.Role == RoleAssistant && len(m.ToolCalls) > 0 {
+			hasOwner = true
+		}
+		if m.Role == RoleTool && m.ToolCallID == "c1" {
+			hasTool = true
+		}
+	}
+	if !hasOwner || !hasTool {
+		t.Fatalf("empty-assistant tail masked the recovery (owner=%v tool=%v): %+v",
+			hasOwner, hasTool, r.Messages)
+	}
+}
+
+// TestPackDropsStrayToolResultDespiteIDReuse: dropOrphanTools is positional
+// too. A stray tool result whose own (dangling, dropped) assistant reused an
+// older turn's ID must not survive via that older assistant's issuance - it
+// would land right after a user message and 400 strict backends.
+func TestPackDropsStrayToolResultDespiteIDReuse(t *testing.T) {
+	history := []Message{
+		{Role: RoleUser, Content: "task"},
+		// Turn 1 completes with call_0.
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call_0", Name: "bash"}}},
+		{Role: RoleTool, ToolCallID: "call_0", Content: "ok"},
+		{Role: RoleAssistant, Content: "done"},
+		{Role: RoleUser, Content: "again"},
+		// Turn 2 reuses call_0 in a parallel set and is aborted after one result.
+		{Role: RoleAssistant, ToolCalls: []ToolCall{
+			{ID: "call_0", Name: "bash"}, {ID: "call_1", Name: "bash"},
+		}},
+		{Role: RoleTool, ToolCallID: "call_0", Content: "partial"},
+		{Role: RoleUser, Content: "next"},
+	}
+	r := Pack(history, 100000)
+	for i, m := range r.Messages {
+		if m.Role != RoleTool {
+			continue
+		}
+		if i == 0 || r.Messages[i-1].Role == RoleUser || m.Content == "partial" {
+			t.Fatalf("stray tool result survived via reused ID: %+v", r.Messages)
+		}
+	}
+}
+
 // TestPackKeepsFullyAnsweredToolCalls: don't over-reach. An assistant whose
 // every tool_call is answered (including parallel) must survive intact.
 func TestPackKeepsFullyAnsweredToolCalls(t *testing.T) {

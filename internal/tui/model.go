@@ -662,6 +662,11 @@ func (m *Model) endTurn() {
 	m.runawayNudged = false
 	m.emptyNudged = false
 	m.verifyNudged = false
+	// The queue-refusal hint says "send it when the turn ends"; that moment is
+	// now, so the advice would be stale from the next render on.
+	if m.status == queueSlashHint {
+		m.status = ""
+	}
 }
 
 func (m *Model) buildMessages() []chmctx.Message {
@@ -753,7 +758,13 @@ func (m *Model) applyContent(e llm.Event) {
 	if m.phase == phaseThinking {
 		m.phase = phaseStreaming
 	}
-	m.streaming.WriteString(e.Content)
+	// Expand tabs on the way into the display buffer: terminals advance a
+	// literal tab to the next 8-column stop while every width computation
+	// downstream (View's live ansi.Wrap, glamour's code-fence padding,
+	// wrapForScrollback) counts it as one cell, so a tab-indented code block
+	// passes the width checks yet physically overflows and drifts the
+	// renderer's cursor math. Display-only: history keeps e.Final untouched.
+	m.streaming.WriteString(strings.ReplaceAll(e.Content, "\t", "    "))
 	m.streamingEstimate += len(e.Content) / 4
 }
 
@@ -1117,7 +1128,13 @@ func toolResultFailed(name, result string) bool {
 		// isn't counted as a failure and made to feed the repeated-failure nudge.
 		return strings.HasPrefix(t, "(read error:") || t == "(empty path)"
 	case tools.BashName:
-		return strings.Contains(result, "\n(exit: ") || strings.Contains(result, "(timeout after ")
+		// "(empty command)" is bash's malformed-call outcome (missing/blank
+		// cmd), exact-matched like read_file's "(empty path)": successful bash
+		// output can legitimately start with "(", so no prefix match here. It
+		// must count as a failure or a model looping on empty calls never
+		// builds a streak and slips past the backstop to the runaway cap.
+		return strings.Contains(result, "\n(exit: ") || strings.Contains(result, "(timeout after ") ||
+			t == "(empty command)"
 	}
 	return false
 }

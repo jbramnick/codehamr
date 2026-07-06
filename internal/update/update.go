@@ -219,9 +219,33 @@ func Apply(ctx context.Context, execPath string) error {
 // process's lifetime, so unlink-at-Apply-time fails but unlink-at-next-launch
 // wins. Failure is silent: a leftover .old wastes disk but never breaks the
 // session.
+//
+// It also sweeps orphaned .codehamr-update-* temp files: a Ctrl+C mid-download
+// (no signal handler exists that early, so the default disposition kills the
+// process outright) skips Apply's deferred Remove, and each retry uses a fresh
+// random suffix, so without the sweep every interrupted update strands another
+// multi-MB partial in the install dir forever. Only files older than
+// orphanSweepAge are removed: a second instance launched during a pending
+// update would otherwise unlink the first instance's in-flight download and
+// fail that update spuriously; a genuinely orphaned partial just waits one
+// more launch.
 func CleanupOld(execPath string) {
 	_ = os.Remove(execPath + ".old")
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(execPath), ".codehamr-update-*"))
+	if err != nil {
+		return
+	}
+	for _, m := range matches {
+		if info, err := os.Stat(m); err == nil && time.Since(info.ModTime()) > orphanSweepAge {
+			_ = os.Remove(m)
+		}
+	}
 }
+
+// orphanSweepAge is how old a .codehamr-update-* temp must be before the
+// launch sweep treats it as orphaned rather than another instance's live
+// download; comfortably past any Apply budget.
+const orphanSweepAge = time.Hour
 
 // fetchHash downloads codehamr_checksums.txt and returns the hash for asset.
 // The manifest is one line per asset, "<hex-sha256>  <filename>"; we match the

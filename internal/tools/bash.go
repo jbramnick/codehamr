@@ -51,11 +51,29 @@ func Bash(parent context.Context, command string, timeout time.Duration) string 
 	// children (`cmd &`) outlive the parent shell and leak.
 	setProcessGroup(cmd)
 	// Cap the wait for stdout/stderr pipes to close after /bin/sh exits.
-	// Backgrounded children inherit those pipe fds, so without this
-	// CombinedOutput blocks for the full timeout even though the shell is gone.
+	// Backgrounded children inherit those pipe fds, so without this Run's
+	// pipe-copy goroutine blocks for the full timeout even though the shell
+	// is gone.
 	cmd.WaitDelay = 100 * time.Millisecond
-	out, err := cmd.CombinedOutput()
-	s := string(out)
+	// Bounded combined output instead of CombinedOutput's unbounded buffer: a
+	// high-throughput command (`cat big.iso`, `grep -r "" /`) can emit hundreds
+	// of MB/s and OOM-kill the whole TUI well before the timeout or Ctrl+C
+	// react. ctx.Truncate keeps only head+tail anyway, so nothing the model
+	// would see is lost. Stdout and Stderr get the SAME writer value, which
+	// os/exec detects and funnels through one pipe: no locking needed.
+	buf := &headTailBuffer{}
+	cmd.Stdout = buf
+	cmd.Stderr = buf
+	err := cmd.Run()
+	s := buf.String()
+	// Name the capture drop at the END of the output, where ctx.Truncate's
+	// tail keep guarantees the model sees it: the in-band seam marker sits at
+	// the ~1MB offset, always inside Truncate's dropped middle, and Truncate's
+	// own "total" would count the collapsed string, under-reporting the real
+	// size by orders of magnitude.
+	if d := buf.droppedBytes(); d > 0 {
+		s += fmt.Sprintf("\n(output capped at capture: %d bytes total, %d bytes dropped mid-stream)", buf.totalBytes(), d)
+	}
 	if err != nil {
 		switch {
 		case ctxT.Err() == context.DeadlineExceeded:
@@ -144,12 +162,25 @@ func runRaw(parent context.Context, call chmctx.ToolCall) string {
 		return Bash(parent, cmd, timeout)
 	case WriteFileName:
 		path, _ := call.Arguments["path"].(string)
-		content, _ := call.Arguments["content"].(string)
+		// A missing/non-string content (valid JSON, so no _parse_error; schema
+		// `required` is not enforced by open-source backends) must not decode
+		// to "" and silently truncate an existing file to 0 bytes behind a
+		// success-shaped result. An explicit `"content": ""` still writes.
+		content, ok := call.Arguments["content"].(string)
+		if !ok {
+			return `(missing content argument: the call carried no string "content", refusing to write - resend with the full content; an intentionally empty file needs an explicit "content": "")`
+		}
 		return WriteFile(path, content)
 	case EditFileName:
 		path, _ := call.Arguments["path"].(string)
 		oldString, _ := call.Arguments["old_string"].(string)
-		newString, _ := call.Arguments["new_string"].(string)
+		// Same guard as write_file's content: a dropped new_string must not
+		// decode to "" and silently delete the matched text. An explicit
+		// `"new_string": ""` still deletes.
+		newString, ok := call.Arguments["new_string"].(string)
+		if !ok {
+			return `(missing new_string argument: the call carried no string "new_string", refusing to edit - resend it; deleting the match needs an explicit "new_string": "")`
+		}
 		return EditFile(path, oldString, newString)
 	case ReadFileName:
 		path, _ := call.Arguments["path"].(string)
@@ -182,6 +213,83 @@ func InlineStatus(call chmctx.ToolCall) string {
 			}
 		}
 		return "▶ " + call.Name
+	}
+}
+
+// bashOutputHead / bashOutputTail bound what headTailBuffer retains: first 1MB
+// plus last 1MB of combined output. Far above ctx.Truncate's ~24KB relevance
+// threshold (nothing the model would ever see is dropped), small enough that a
+// firehose command can't OOM the process.
+const (
+	bashOutputHead = 1 << 20
+	bashOutputTail = 1 << 20
+)
+
+// headTailBuffer is an io.Writer keeping the first bashOutputHead and the last
+// bashOutputTail bytes written, discarding the middle. The tail is a fixed ring
+// so a firehose costs a bounded copy, never an allocation per write.
+type headTailBuffer struct {
+	head      []byte
+	ring      []byte
+	pos       int   // next write index in ring
+	tailBytes int64 // total bytes routed to the ring
+}
+
+func (w *headTailBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if room := bashOutputHead - len(w.head); room > 0 {
+		take := min(room, len(p))
+		w.head = append(w.head, p[:take]...)
+		p = p[take:]
+	}
+	if len(p) == 0 {
+		return n, nil
+	}
+	if w.ring == nil {
+		w.ring = make([]byte, bashOutputTail)
+	}
+	w.tailBytes += int64(len(p))
+	if len(p) >= bashOutputTail {
+		copy(w.ring, p[len(p)-bashOutputTail:])
+		w.pos = 0
+		return n, nil
+	}
+	k := copy(w.ring[w.pos:], p)
+	w.pos = (w.pos + k) % bashOutputTail
+	if k < len(p) {
+		w.pos = copy(w.ring, p[k:])
+	}
+	return n, nil
+}
+
+// droppedBytes is how many middle bytes the ring discarded; 0 while the whole
+// output still fits head+tail.
+func (w *headTailBuffer) droppedBytes() int64 {
+	if d := w.tailBytes - int64(len(w.ring)); d > 0 {
+		return d
+	}
+	return 0
+}
+
+// totalBytes is the full combined output size as written, kept or not.
+func (w *headTailBuffer) totalBytes() int64 {
+	return int64(len(w.head)) + w.tailBytes
+}
+
+// String reassembles head + tail. The in-band seam marker keeps the two
+// halves from reading as contiguous; the accurate size report lives in the
+// caller's end-of-output note (this marker sits at the ~1MB offset, inside
+// the middle ctx.Truncate drops, so the model never reads it).
+func (w *headTailBuffer) String() string {
+	switch {
+	case w.tailBytes == 0:
+		return string(w.head)
+	case w.tailBytes <= int64(len(w.ring)):
+		return string(w.head) + string(w.ring[:w.tailBytes])
+	default:
+		return string(w.head) +
+			fmt.Sprintf("\n───── %d bytes OMITTED here (capture cap) ─────\n", w.droppedBytes()) +
+			string(w.ring[w.pos:]) + string(w.ring[:w.pos])
 	}
 }
 

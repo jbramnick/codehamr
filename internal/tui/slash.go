@@ -219,7 +219,10 @@ func (m Model) cmdClear(_ []string) (tea.Model, tea.Cmd) {
 	line := styleOK.Render("✓ conversation reset")
 	m.scroll.WriteString(line + "\n")
 	m.outbox = nil
-	return m, tea.Sequence(tea.ClearScreen, eraseScrollback, tea.Println(line))
+	// Wrap like the outbox drain would: this Println bypasses it (the Sequence
+	// owns the print), and every string handed to tea.Println must be wrapped
+	// or an over-width line drifts the renderer's cursor math.
+	return m, tea.Sequence(tea.ClearScreen, eraseScrollback, tea.Println(wrapForScrollback(line, m.width)))
 }
 
 // hamrpassMinKeyLen guards against half-pasted keys: real keys clear 16,
@@ -297,7 +300,10 @@ func (m Model) cmdHamrpass(args []string) (tea.Model, tea.Cmd) {
 func (m *Model) printHamrpassStatus() {
 	hp, ok := m.cfg.Models["hamrpass"]
 	status := "unset"
-	if ok && strings.TrimSpace(hp.Key) != "" {
+	// ResolvedKey, not the raw field: a `${VAR}` reference with the var unset
+	// dials out keyless everywhere else, so reporting the literal reference as
+	// "set" would contradict the 401s the user is about to see.
+	if ok && strings.TrimSpace(hp.ResolvedKey()) != "" {
 		status = "set"
 	}
 	url, llmName := "https://codehamr.com", "hamrpass"

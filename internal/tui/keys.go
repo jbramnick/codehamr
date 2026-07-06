@@ -11,6 +11,11 @@ import (
 // the arm/disarm sites compare against the same string.
 const quitArmText = "press Ctrl+C again to quit"
 
+// queueSlashHint is the status-bar hint when queuePrompt refuses to join a
+// slash command with a queued prompt; a const so endTurn can clear exactly
+// this hint once the turn ends and the advice is obsolete.
+const queueSlashHint = "a slash command can't join a queued prompt - send it when the turn ends"
+
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Any key that isn't Ctrl+C clears a pending quit arm: no stray quits.
 	if msg.Type != tea.KeyCtrlC && !m.quitArmedAt.IsZero() {
@@ -24,8 +29,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCtrlC()
 	case tea.KeyCtrlL:
 		// Clear the typed prompt and force a full redraw. Scrollback and
-		// history stay; Ctrl+L tidies input, /clear starts over.
+		// history stay; Ctrl+L tidies input, /clear starts over. Close the
+		// popover with the text it filtered on, like every other clearing
+		// path; left open, its stale selection would hijack the next Enter.
 		m.ta.Reset()
+		m.closePopover()
 		return m, tea.ClearScreen
 	case tea.KeyBackspace:
 		// Mid-turn Backspace on an empty prompt pulls a queued prompt back into
@@ -204,7 +212,10 @@ func (m Model) handleEscInPopover() (tea.Model, tea.Cmd) {
 // popover (same model as Tab); plain Enter commits.
 func (m Model) handleEnter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Alt {
-		return m.forwardToTextarea(msg)
+		// Strip the Alt flag before forwarding: the textarea's InsertNewline
+		// binding matches "enter", and an alt-flagged KeyEnter ("alt+enter")
+		// matches no binding at all, falling through to a rune-insert no-op.
+		return m.forwardToTextarea(tea.KeyMsg{Type: tea.KeyEnter})
 	}
 	if m.phase.active() {
 		return m.queuePrompt()
@@ -262,6 +273,16 @@ func (m Model) queuePrompt() (tea.Model, tea.Cmd) {
 	if m.queued == nil {
 		m.queued = &queuedPrompt{send: send, echo: echo}
 	} else {
+		// Never newline-join across a slash boundary. The joined text either
+		// starts with "/" and fires as ONE slash command whose Fields-split
+		// swallows the appended prose as bogus args (a queued "/clear" plus a
+		// follow-up instruction wipes the conversation and silently drops the
+		// instruction), or it ships the slash line to the LLM as prose. Refuse
+		// the append and keep the draft in the textarea so nothing is lost.
+		if strings.HasPrefix(m.queued.send, "/") || strings.HasPrefix(send, "/") {
+			m.status = queueSlashHint
+			return m, nil
+		}
 		// A fresh pointer, not an in-place edit: Model is copied by value across
 		// bubbletea, so mutating *m.queued would also reach through the discarded
 		// prior copy that still aliases the same struct.
