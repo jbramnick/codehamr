@@ -101,7 +101,7 @@ func BashSchema() map[string]any {
 		"type": "function",
 		"function": map[string]any{
 			"name":        BashName,
-			"description": "Run a shell command inside the dev container. Combined stdout+stderr is returned. Use targeted commands (grep, head, tail) to avoid the 6k truncation.",
+			"description": "Run a shell command in the user's environment. Combined stdout+stderr is returned. Use targeted commands (grep, head, tail) to avoid the 6k truncation.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{

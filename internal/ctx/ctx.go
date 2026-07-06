@@ -49,13 +49,14 @@ const (
 	ToolOutputCap = 6000
 	ToolHeadTail  = 2000
 	// FixedSystem reserves budget for the embedded prompt + working-dir anchor
-	// (see tui.buildSystem). PROMPT_SYS.md + anchor is ~3700 tokens (the
-	// verification-honesty ledger and trace-read fallback grew it; the
-	// web-search and truncation-note trims shrank it); the buffer to 4000
-	// keeps prompt edits and long project paths from silently over-budgeting
-	// small-ctx profiles. A tui test pins this against the live prompt; bump
-	// here when it fails, never relax the assertion.
-	FixedSystem = 4000
+	// (see tui.buildSystem). PROMPT_SYS.md + anchor is ~4100 tokens (the
+	// verification-honesty ledger and trace-read fallback grew it, then the
+	// git/secrets discipline lines; the web-search and truncation-note trims
+	// shrank it); the buffer to 4200 keeps prompt edits and long project paths
+	// from silently over-budgeting small-ctx profiles. A test pins this
+	// against the live prompt; bump here when it fails, never relax the
+	// assertion.
+	FixedSystem = 4200
 	FixedTools  = 1500
 )
 

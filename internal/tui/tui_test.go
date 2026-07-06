@@ -2045,9 +2045,13 @@ func TestVerifyNudgeFiresOnceAtMinRounds(t *testing.T) {
 	}
 	// A missing runtime must be proven with a read-only probe, never assumed
 	// (the mc run asserted "no browser here" without ever checking) and never
-	// chased with an install (the doomed apt-get loop).
-	if !strings.Contains(last.Content, "command -v") || !strings.Contains(last.Content, "never install") {
-		t.Fatalf("re-grounding note must demand a read-only runtime probe with a no-install fence: %q", last.Content)
+	// chased with an install hunt (the doomed apt-get loop). The fence allows
+	// exactly the prompt's fire-once install and forbids everything past it,
+	// so the nudge no longer contradicts the verify ladder at finish time.
+	if !strings.Contains(last.Content, "command -v") ||
+		!strings.Contains(last.Content, "never re-try a failed install") ||
+		!strings.Contains(last.Content, "fire-once") {
+		t.Fatalf("re-grounding note must demand a read-only runtime probe with the fire-once install fence: %q", last.Content)
 	}
 
 	// Latched: a later drain in the same turn must not re-fire.

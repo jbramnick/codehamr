@@ -90,7 +90,7 @@ If the model prints tool calls as text instead of acting, enable your server's t
 
 ## Give the agent a runtime
 
-codehamr verifies by running things, so give its sandbox the toolchains your project needs; it cannot install them itself. If a check can't run, it reports `unverified:` instead of pretending.
+codehamr verifies by running things, so give its sandbox the toolchains your project needs. It bootstraps small verify helpers itself when the box allows (a headless browser, a linter), but won't provision your project's own toolchain. If a check can't run, it reports `unverified:` instead of pretending.
 
 ## Compare
 
