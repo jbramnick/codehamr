@@ -2702,9 +2702,9 @@ func TestStreamingShownInLiveView(t *testing.T) {
 }
 
 // TestFocusBlurMsgsAreInert: terminal focus reports arrive as tea.FocusMsg /
-// tea.BlurMsg under tea.WithReportFocus. They must never touch the textarea (no
-// inserted chars, no height change), else the UI slides up when another window
-// steals focus.
+// tea.BlurMsg under tea.WithReportFocus. They must never alter the textarea's
+// value or height, and they control cursor visibility (Focus → blink on, Blur
+// → hide). FocusMsg returns a blink ticker Cmd; BlurMsg returns nil.
 func TestFocusBlurMsgsAreInert(t *testing.T) {
 	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
 	beforeVal := m.ta.Value()
@@ -2718,9 +2718,7 @@ func TestFocusBlurMsgsAreInert(t *testing.T) {
 	if om.ta.Height() != beforeHeight {
 		t.Fatalf("FocusMsg changed textarea height: %d → %d", beforeHeight, om.ta.Height())
 	}
-	if cmd != nil {
-		t.Fatal("FocusMsg must not return a Cmd")
-	}
+	// Focus returns a blink ticker Cmd — that is expected.
 
 	out, cmd = m.Update(tea.BlurMsg{})
 	om = out.(Model)

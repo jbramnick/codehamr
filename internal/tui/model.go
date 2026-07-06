@@ -390,18 +390,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.FocusMsg, tea.BlurMsg:
-		// Terminal focus reports (CSI I / CSI O) arrive as these typed msgs
-		// under tea.WithReportFocus. Swallow them so they never reach
-		// textarea.Update; otherwise the escape fragments get parsed as
-		// printable runes, inserted into the prompt, and bloat textarea height
-		// on every focus switch.
+	case tea.FocusMsg:
+		m.ta.ta.Focus()
+		return m, nil
+	case tea.BlurMsg:
+		m.ta.ta.Blur()
 		return m, nil
 
 	case tea.KeyMsg:
 		// An empty-runes key can surface when the parser chokes mid-escape.
 		// Drop it before recomputeLayout wastes cycles.
-		if msg.Type == tea.KeyRunes && len(msg.Runes) == 0 {
+		if msg.Type == tea.KeyRunes && len(msg.Runes)== 0 {
 			return m, nil
 		}
 		// Pre-grow the textarea before bubbles processes the key. bubbles'
