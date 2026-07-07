@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,65 @@ func TestBashExactExitMarkerFormat(t *testing.T) {
 func TestBashEmptyCommand(t *testing.T) {
 	if Bash(context.Background(), " ", time.Second) != "(empty command)" {
 		t.Fatal("empty command handling wrong")
+	}
+}
+
+// TestBashBoundsRunawayOutput: a firehose command must not grow an unbounded
+// buffer (the old CombinedOutput OOM-killed the whole TUI on `cat big.iso`
+// well before the timeout could react). The capture keeps head+tail with an
+// OMITTED marker between, mirroring ctx.Truncate's framing, and preserves the
+// very first and very last bytes so the model still sees both ends.
+func TestBashBoundsRunawayOutput(t *testing.T) {
+	// ~3x the tail cap so the ring provably wraps.
+	n := 3 * bashOutputTail
+	out := Bash(context.Background(),
+		"printf 'START'; head -c "+strconv.Itoa(n)+" /dev/zero | tr '\\0' 'a'; printf 'END'",
+		30*time.Second)
+	if len(out) > bashOutputHead+bashOutputTail+300 {
+		t.Fatalf("output not bounded: %d bytes", len(out))
+	}
+	if !strings.HasPrefix(out, "START") {
+		t.Fatalf("head lost, output starts %q", out[:16])
+	}
+	if !strings.Contains(out, "END\n(output capped at capture:") {
+		t.Fatalf("tail or capture note lost, output ends %q", out[len(out)-80:])
+	}
+	if !strings.Contains(out, "OMITTED") {
+		t.Fatal("dropped middle must carry the seam marker")
+	}
+}
+
+// TestHeadTailBufferSmallOutputUntouched: output under the head cap must come
+// back byte-identical - the bounding must be invisible in the normal case.
+func TestHeadTailBufferSmallOutputUntouched(t *testing.T) {
+	var b headTailBuffer
+	b.Write([]byte("hello "))
+	b.Write([]byte("world"))
+	if got := b.String(); got != "hello world" {
+		t.Fatalf("small output mangled: %q", got)
+	}
+}
+
+// TestHeadTailBufferKeepsExactHeadAndTail: once the middle is dropped, the
+// reassembly must carry exactly the first head-cap bytes and the last tail-cap
+// bytes in order, across chunked writes that wrap the ring several times.
+func TestHeadTailBufferKeepsExactHeadAndTail(t *testing.T) {
+	var b headTailBuffer
+	total := bashOutputHead + 5*bashOutputTail
+	// Deterministic byte stream in awkward chunk sizes to exercise ring wraps.
+	buf := make([]byte, 0, total)
+	for i := 0; len(buf) < total; i++ {
+		buf = append(buf, byte('a'+i%26))
+	}
+	for i := 0; i < total; i += 3333 {
+		b.Write(buf[i:min(i+3333, total)])
+	}
+	got := b.String()
+	if !strings.HasPrefix(got, string(buf[:bashOutputHead])) {
+		t.Fatal("head bytes wrong")
+	}
+	if !strings.HasSuffix(got, string(buf[total-bashOutputTail:])) {
+		t.Fatal("tail bytes wrong after ring wraps")
 	}
 }
 
@@ -119,7 +179,8 @@ func TestBashTimeoutOverflowClamped(t *testing.T) {
 
 // TestBashParentCancelMidRun: parent cancel mid-sleep returns "(cancelled)",
 // not a misleading "(timeout after Xs)" or stale exit code. Parent cancel
-// always wins over timeout: it's the user's signal.
+// wins when it fires before the deadline: it's the user's signal (a latched
+// DeadlineExceeded still labels as timeout, since the timeout killed first).
 func TestBashParentCancelMidRun(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
 	go func() {

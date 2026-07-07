@@ -5,8 +5,8 @@
 //
 // Called once before the TUI starts (see maybeSelfUpdate): Check decides
 // whether an update exists, Apply atomically replaces the running binary, and
-// the caller's syscall.Exec re-enters the new version in place. The TUI carries
-// no update awareness.
+// the caller's reExec (unix execve / Windows spawn-and-wait) re-enters the new
+// version. The TUI carries no update awareness.
 //
 // Any failure, whether a network hiccup, offline, missing asset, or parse
 // glitch, returns "no update" rather than an error: a startup banner that
@@ -51,8 +51,8 @@ const fetchTimeout = 2 * time.Second
 var promoteRename = os.Rename
 
 // Check reports whether the local binary's sha256 differs from the remote
-// asset's recorded hash. ctx propagates a startup Ctrl+C into the HTTP request.
-// Returns false on any failure; see package doc.
+// asset's recorded hash. ctx bounds the HTTP request (the caller's update
+// budget). Returns false on any failure; see package doc.
 func Check(ctx context.Context, execPath string) bool {
 	if os.Getenv("CODEHAMR_NO_UPDATE_CHECK") == "1" {
 		return false
@@ -115,8 +115,8 @@ func hashFile(path string) (string, error) {
 
 // Apply downloads the current platform's binary, verifies its sha256 against the
 // published codehamr_checksums.txt, and atomically replaces execPath. The caller
-// is expected to syscall.Exec afterwards so the process becomes the new binary
-// with no user-visible restart.
+// is expected to reExec afterwards (unix execve / Windows spawn-and-wait) so the
+// session continues on the new binary with no user-visible restart.
 //
 // Checksum verification closes the supply-chain hole an unchecked download
 // leaves open: a corrupted CDN response, a TLS-MITM proxy, or a swapped binary
@@ -219,9 +219,33 @@ func Apply(ctx context.Context, execPath string) error {
 // process's lifetime, so unlink-at-Apply-time fails but unlink-at-next-launch
 // wins. Failure is silent: a leftover .old wastes disk but never breaks the
 // session.
+//
+// It also sweeps orphaned .codehamr-update-* temp files: a Ctrl+C mid-download
+// (no signal handler exists that early, so the default disposition kills the
+// process outright) skips Apply's deferred Remove, and each retry uses a fresh
+// random suffix, so without the sweep every interrupted update strands another
+// multi-MB partial in the install dir forever. Only files older than
+// orphanSweepAge are removed: a second instance launched during a pending
+// update would otherwise unlink the first instance's in-flight download and
+// fail that update spuriously; a genuinely orphaned partial just waits one
+// more launch.
 func CleanupOld(execPath string) {
 	_ = os.Remove(execPath + ".old")
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(execPath), ".codehamr-update-*"))
+	if err != nil {
+		return
+	}
+	for _, m := range matches {
+		if info, err := os.Stat(m); err == nil && time.Since(info.ModTime()) > orphanSweepAge {
+			_ = os.Remove(m)
+		}
+	}
 }
+
+// orphanSweepAge is how old a .codehamr-update-* temp must be before the
+// launch sweep treats it as orphaned rather than another instance's live
+// download; comfortably past any Apply budget.
+const orphanSweepAge = time.Hour
 
 // fetchHash downloads codehamr_checksums.txt and returns the hash for asset.
 // The manifest is one line per asset, "<hex-sha256>  <filename>"; we match the

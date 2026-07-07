@@ -573,6 +573,27 @@ func TestResolvedKeyUnsetEnvYieldsEmpty(t *testing.T) {
 	}
 }
 
+// TestResolvedKeyLiteralDollarSurvives: expansion applies ONLY when the whole
+// key is a ${VAR} reference. A literal proxy key containing '$' (llama.cpp
+// --api-key, LiteLLM master keys) must pass through byte-identical:
+// os.ExpandEnv would silently corrupt it ("pa$$word" -> "paword") and every
+// request 401s with nothing anywhere hinting the key was rewritten.
+func TestResolvedKeyLiteralDollarSurvives(t *testing.T) {
+	for _, key := range []string{
+		"pa$$word123",
+		"sk-abc$def",
+		"trailing$",
+		"$UPFRONT-rest",
+		"${not-a-valid-name}", // ${...} but not an env-var name: literal
+		"prefix-${REAL_VAR}",  // reference not the whole key: literal
+	} {
+		p := &Profile{Key: key}
+		if got := p.ResolvedKey(); got != key {
+			t.Errorf("ResolvedKey(%q) = %q, want the literal back", key, got)
+		}
+	}
+}
+
 // TestURLOverrideDoesNotPersist: a CODEHAMR_URL override lives in
 // cfg.URLOverride and ActiveURL reflects it, but Save writes only the stored
 // URL, so re-bootstrapping without the env var restores the original endpoint.

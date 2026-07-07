@@ -97,6 +97,14 @@ type streamChunk struct {
 		CompletionTokens int `json:"completion_tokens"`
 		PromptTokens     int `json:"prompt_tokens"`
 	} `json:"usage,omitempty"`
+	// Error is the mid-stream failure frame OpenAI-compatible backends (and
+	// OpenRouter-style proxies) emit when the provider dies after 200 OK:
+	// `data: {"error":{...}}`, then the connection closes with no [DONE].
+	// Without decoding it, the frame parses to zero choices, the close reads
+	// as clean EOF, and a mid-sentence-truncated turn finalizes as a success.
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
 }
 
 type streamDelta struct {
@@ -116,14 +124,15 @@ type Event struct {
 	Content string
 	// ContextWindow is the server-authoritative context size from the
 	// X-Context-Window header, set only on EventDone when the server sent it.
-	// The TUI overwrites the profile's in-memory ContextSize so the next
-	// ctx.Pack uses what the server allows, not config.yaml's guess. Zero
-	// means no live value in this response.
+	// The TUI records it in a runtime-only per-profile map (tui.Model's
+	// liveContextSize) that outranks the profile's on-disk ContextSize, so the
+	// next ctx.Pack uses what the server allows without the live value ever
+	// reaching config.yaml. Zero means no live value in this response.
 	ContextWindow int
-	ToolCall *chmctx.ToolCall
-	Final    *chmctx.Message
-	Budget   cloud.BudgetStatus
-	Tokens   int
+	ToolCall      *chmctx.ToolCall
+	Final         *chmctx.Message
+	Budget        cloud.BudgetStatus
+	Tokens        int
 	// PromptTokens is the server-counted prompt size from usage.prompt_tokens,
 	// set only on EventDone when the server reported usage. Debug-log
 	// calibration only (actual vs the char/4 packing estimate); it drives no
@@ -478,6 +487,13 @@ func readSSE(parent context.Context, body io.Reader, budget cloud.BudgetStatus, 
 		var sc streamChunk
 		if err := json.Unmarshal(payload, &sc); err != nil {
 			continue
+		}
+		if sc.Error != nil {
+			msg := sc.Error.Message
+			if msg == "" {
+				msg = string(payload)
+			}
+			return nil, 0, 0, fmt.Errorf("the server reported a stream error: %s", msg)
 		}
 		for _, choice := range sc.Choices {
 			if !dispatchDelta(parent, choice.Delta, budget, &fullContent, slots, &order, out) {

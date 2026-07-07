@@ -22,6 +22,11 @@ func EditFile(path, oldString, newString string) string {
 	if oldString == newString {
 		return "(no change: old_string equals new_string)"
 	}
+	// Same guard as ReadFile: open(2) on a FIFO blocks forever and Ctrl+C
+	// can't unblock it, leaking the tool goroutine. Stat never blocks.
+	if info, err := os.Stat(path); err == nil && !info.Mode().IsRegular() && !info.IsDir() {
+		return fmt.Sprintf("(read error: %s is not a regular file)", path)
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Sprintf("(read error: %v)", err)

@@ -78,6 +78,49 @@ func TestQueueSecondEnterAppends(t *testing.T) {
 	}
 }
 
+// TestQueueRefusesSlashMix: a slash command never newline-joins with a queued
+// prompt, in either order. Joined slash-first, the whole slot would fire as ONE
+// slash command whose Fields-split swallows the prose as bogus args (a queued
+// /clear plus a follow-up instruction wipes the conversation AND silently drops
+// the instruction); joined prose-first, the slash line ships to the LLM as
+// prose. The refused draft must stay in the textarea, nothing lost.
+func TestQueueRefusesSlashMix(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	m.phase = phaseThinking
+	m.ta.SetValue("/clear")
+	o1, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m1 := o1.(Model)
+	if m1.queued == nil || m1.queued.send != "/clear" {
+		t.Fatalf("precondition: a slash prompt queues alone, got %+v", m1.queued)
+	}
+
+	m1.ta.SetValue("run the tests")
+	o2, _ := m1.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 := o2.(Model)
+	if m2.queued == nil || m2.queued.send != "/clear" {
+		t.Fatalf("append onto a queued slash command must be refused, got %+v", m2.queued)
+	}
+	if got := m2.ta.Value(); got != "run the tests" {
+		t.Fatalf("the refused draft must stay in the textarea, got %q", got)
+	}
+
+	// Reverse order: prose queued first, slash appended.
+	mr := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	mr.phase = phaseThinking
+	mr.ta.SetValue("run the tests")
+	o3, _ := mr.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m3 := o3.(Model)
+	m3.ta.SetValue("/clear")
+	o4, _ := m3.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m4 := o4.(Model)
+	if m4.queued == nil || m4.queued.send != "run the tests" {
+		t.Fatalf("a slash append onto a queued prompt must be refused, got %+v", m4.queued)
+	}
+	if got := m4.ta.Value(); got != "/clear" {
+		t.Fatalf("the refused slash draft must stay in the textarea, got %q", got)
+	}
+}
+
 // TestQueueAutoSubmitsAfterTurn drives a full turn with a prompt queued mid-flight
 // and asserts the queued prompt auto-fires a second request when the turn ends,
 // then the slot is cleared. round==2 is the proof the follow-up actually ran.

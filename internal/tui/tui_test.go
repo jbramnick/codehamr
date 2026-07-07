@@ -315,7 +315,7 @@ func TestPopoverTabOnEmptyOpensCommandList(t *testing.T) {
 		t.Fatalf("popover should show all commands, got %d of %d",
 			len(om.suggest), len(commands))
 	}
-	// second Tab cycles (5 commands → selection moves from 0 to 1)
+	// second Tab cycles (selection moves from 0 to 1)
 	mm2, _ := om.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if mm2.(Model).suggestIdx != 1 {
 		t.Fatalf("second Tab should cycle to idx 1, got %d", mm2.(Model).suggestIdx)
@@ -1150,7 +1150,7 @@ func TestHandleProbeSuccessUpdatesLiveCtxAndPrintsActivation(t *testing.T) {
 	profileName := "remote"
 	m.cfg.Models[profileName] = &config.Profile{LLM: "gpt-4", URL: "https://api.example.com", Key: "sk-test", ContextSize: 262144}
 	m.cfg.Active = profileName
-	out, _ := m.handleProbe(probeMsg{profile: profileName, contextWindow: 262144})
+	out, _ := m.handleProbe(probeMsg{profile: profileName, cli: m.cli, contextWindow: 262144})
 	final := out.(Model)
 	if got := final.liveContextSize[profileName]; got != 262144 {
 		t.Fatalf("liveContextSize[%s] = %d, want 262144", profileName, got)
@@ -1228,10 +1228,33 @@ func TestStaleProbeForOldProfileDoesNotOverwriteConnectedFlag(t *testing.T) {
 		t.Fatal("stale failure probe overwrote live connected=true")
 	}
 
-	// Sanity: a probe for the live profile DOES update.
-	out, _ = m.handleProbe(probeMsg{profile: "local", err: cloud.ErrUnauthorized, silent: true})
+	// Sanity: a probe for the live profile with the live client DOES update.
+	out, _ = m.handleProbe(probeMsg{profile: "local", cli: m.cli, err: cloud.ErrUnauthorized, silent: true})
 	if out.(Model).connected {
 		t.Fatal("probe for the live profile must update connected")
+	}
+}
+
+// TestStaleProbeForSameProfileDoesNotOverwriteFreshOutcome: two probes for the
+// SAME profile can be in flight (startup probe + a re-activation); the profile
+// name alone can't tell them apart, so staleness is keyed on the client
+// pointer (rebuildClient swaps it per re-activation). A hung old probe's
+// failure landing after the fresh probe's success must neither flip connected
+// nor print a contradictory "⚠ probe" banner after the "✓ active" line.
+func TestStaleProbeForSameProfileDoesNotOverwriteFreshOutcome(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	m.cfg.Active = "local"
+	staleCli := m.cli
+	m.rebuildClient() // re-activation swapped the client; staleCli's probe is now superseded
+	m.connected = true
+
+	out, _ := m.handleProbe(probeMsg{profile: "local", cli: staleCli, err: cloud.ErrUnauthorized})
+	final := out.(Model)
+	if !final.connected {
+		t.Fatal("stale same-profile probe failure must not flip connected")
+	}
+	if got := stripANSI(final.scroll.String()); strings.Contains(got, "⚠ probe") {
+		t.Fatalf("stale same-profile probe must not print a failure banner:\n%s", got)
 	}
 }
 
@@ -1410,6 +1433,45 @@ func TestCtrlLClearsPromptNotScrollback(t *testing.T) {
 	}
 }
 
+// TestCtrlLClosesPopover: Ctrl+L clears the popover along with the prompt.
+// Left open on stale suggestions, the next Enter would take the has-selection
+// path and insert a ghost command into the freshly emptied prompt.
+func TestCtrlLClosesPopover(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	o1, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m1 := o1.(Model)
+	if !m1.popoverOpen() {
+		t.Fatal("precondition: typing '/' opens the command popover")
+	}
+
+	o2, _ := m1.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	m2 := o2.(Model)
+	if m2.popoverOpen() {
+		t.Fatal("Ctrl+L must close the popover along with the prompt")
+	}
+	o3, _ := m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := o3.(Model).ta.Value(); got != "" {
+		t.Fatalf("Enter after Ctrl+L must be a no-op, got ghost completion %q", got)
+	}
+}
+
+// TestAltEnterInsertsNewline: Alt+Enter composes a multi-line prompt. The
+// alt-flagged KeyEnter ("alt+enter") matches no textarea binding, so the flag
+// must be stripped before forwarding or the key is a silent no-op and
+// multi-line prompts can only be pasted.
+func TestAltEnterInsertsNewline(t *testing.T) {
+	m := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
+	m.ta.SetValue("first line")
+	out, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter, Alt: true})
+	om := out.(Model)
+	if got := om.ta.Value(); got != "first line\n" {
+		t.Fatalf("Alt+Enter must insert a newline, got %q", got)
+	}
+	if len(om.history) != 0 {
+		t.Fatal("Alt+Enter must not submit the prompt")
+	}
+}
+
 // TestHumanIntFormat: thin-comma formatting must handle the edge cases the
 // activation line cares about: single digits, exact 4-digit, exact powers,
 // and very large windows that would otherwise read as a wall of digits.
@@ -1466,7 +1528,8 @@ func TestHumanTokensFormat(t *testing.T) {
 
 // TestLiveElapsed: the running wall-clock readout, whole seconds under a
 // minute (no spinning sub-second decimal at the spinner's refresh rate), then
-// `6m 51s` / `1h 14m`, with the trailing unit dropped when zero.
+// `6m 51s` / `1h 14m`, with the lower unit always two digits and never
+// dropped (`8m 00s`, not `8m`), so the readout never shrinks mid-turn.
 func TestLiveElapsed(t *testing.T) {
 	cases := []struct {
 		d    time.Duration
@@ -1630,8 +1693,8 @@ func TestToolTargetKey(t *testing.T) {
 // "(cancelled)" result (user Ctrl+C) is never a failure; write/edit fail iff the
 // trimmed result opens with "(" (their error convention); read_file returns raw
 // content on success, which can start with "(", so it fails only on its two
-// real error outputs; bash fails iff it carries "\n(exit: " or "(timeout after ";
-// a clean result is not a failure.
+// real error outputs; bash fails iff it carries "\n(exit: " or "(timeout after "
+// or is exactly "(empty command)"; a clean result is not a failure.
 func TestToolResultFailed(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -1643,7 +1706,9 @@ func TestToolResultFailed(t *testing.T) {
 		{"cancelled file op is not a failure", tools.WriteFileName, "(cancelled)", false},
 		{"bash non-zero exit fails", tools.BashName, "boom\n(exit: exit status 1)", true},
 		{"bash timeout fails", tools.BashName, "slow\n(timeout after 2s)", true},
+		{"bash empty-command fails", tools.BashName, "(empty command)", true},
 		{"bash clean success", tools.BashName, "all green\n", false},
+		{"bash leading-paren output is not a failure", tools.BashName, "(3 rows affected)\n", false},
 		{"write_file error fails", tools.WriteFileName, "(write error: permission denied)", true},
 		{"write_file success", tools.WriteFileName, "wrote 5 bytes to /tmp/x", false},
 		{"edit_file not-found fails", tools.EditFileName, "(not found: old_string)", true},
@@ -1913,9 +1978,13 @@ func TestVerifyNudgeFiresOnceAtMinRounds(t *testing.T) {
 	}
 	// A missing runtime must be proven with a read-only probe, never assumed
 	// (the mc run asserted "no browser here" without ever checking) and never
-	// chased with an install (the doomed apt-get loop).
-	if !strings.Contains(last.Content, "command -v") || !strings.Contains(last.Content, "never install") {
-		t.Fatalf("re-grounding note must demand a read-only runtime probe with a no-install fence: %q", last.Content)
+	// chased with an install hunt (the doomed apt-get loop). The fence allows
+	// exactly the prompt's fire-once install and forbids everything past it,
+	// so the nudge no longer contradicts the verify ladder at finish time.
+	if !strings.Contains(last.Content, "command -v") ||
+		!strings.Contains(last.Content, "never re-try a failed install") ||
+		!strings.Contains(last.Content, "fire-once") {
+		t.Fatalf("re-grounding note must demand a read-only runtime probe with the fire-once install fence: %q", last.Content)
 	}
 
 	// Latched: a later drain in the same turn must not re-fire.
@@ -2853,10 +2922,10 @@ func TestStaleProbeDoesNotPrintActivationBannerForNonActiveProfile(t *testing.T)
 		t.Fatalf("stale probe must not print activation banner for non-active profile:\n%s", got)
 	}
 
-	// Sanity: probe for the live profile DOES print the banner.
+	// Sanity: probe for the live profile with the live client DOES print the banner.
 	m2 := newTestModel(t, func(http.ResponseWriter, *http.Request) {})
 	m2.cfg.Active = "local"
-	out2, _ := m2.handleProbe(probeMsg{profile: "local", contextWindow: 256000})
+	out2, _ := m2.handleProbe(probeMsg{profile: "local", cli: m2.cli, contextWindow: 256000})
 	final2 := out2.(Model)
 	if got := stripANSI(final2.scroll.String()); !strings.Contains(got, "✓ active: local") {
 		t.Fatalf("active-profile probe must print activation banner:\n%s", got)
@@ -2940,7 +3009,7 @@ func TestEmptyReplyNudgeRePromptsThenRecovers(t *testing.T) {
 	if !strings.Contains(scroll, "fixed and verified") {
 		t.Fatalf("recovered summary missing from scroll:\n%s", scroll)
 	}
-	if strings.Contains(scroll, "your model server dropped the call") {
+	if strings.Contains(scroll, "dropped the call") {
 		t.Fatalf("a recovered turn must not surface the persistent-empty diagnostic:\n%s", scroll)
 	}
 	if final.phase != phaseIdle {

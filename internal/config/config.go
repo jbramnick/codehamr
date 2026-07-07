@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -175,14 +176,41 @@ func Bootstrap(projectRoot string) (*Config, bool, error) {
 	return cfg, created, nil
 }
 
-// ResolvedKey returns the profile's key with ${VAR} / $VAR references expanded
-// against the process environment. Lets config.yaml carry `key: ${MY_KEY}`
+// ResolvedKey returns the profile's key, expanding it against the process
+// environment when the WHOLE key is a `${VAR}` reference (the advertised
+// form; see the config.yaml header). Lets config.yaml carry `key: ${MY_KEY}`
 // instead of a plaintext secret: the reference is what round-trips on Save,
 // the expansion happens only at read time so the resolved value never touches
-// disk. A literal key (no $-references) passes through unchanged. Use this at
-// every site that dials out or branches on "is this profile keyed".
+// disk. Anything else passes through verbatim: os.ExpandEnv here would
+// silently corrupt literal keys containing '$' (llama.cpp/LiteLLM proxy keys
+// like "pa$$word" become "paword", then 401 with no hint anywhere), and
+// ExpandEnv has no escape syntax to opt out. Use this at every site that
+// dials out or branches on "is this profile keyed".
 func (p *Profile) ResolvedKey() string {
-	return os.ExpandEnv(p.Key)
+	key := p.Key
+	if name, ok := strings.CutPrefix(key, "${"); ok {
+		if name, ok = strings.CutSuffix(name, "}"); ok && isEnvName(name) {
+			return os.Getenv(name)
+		}
+	}
+	return key
+}
+
+// isEnvName reports whether s is a POSIX environment variable name
+// ([A-Za-z_][A-Za-z0-9_]*), the only content ${...} expands.
+func isEnvName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Save rewrites config.yaml.

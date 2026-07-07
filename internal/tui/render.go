@@ -33,7 +33,8 @@ var splashHamr = []string{
 
 // appendLine queues a styled line for tea.Println on the next Update cycle,
 // so the terminal, not us, owns the scrollback. scroll is a passive
-// write-only transcript: never rendered, read only by tests and the debug log.
+// transcript: never rendered, replayed by handleResizeSettle after a width
+// change, and read by tests.
 func (m *Model) appendLine(s string) {
 	fmt.Fprintf(m.scroll, "%s\n", s)
 	m.outbox = append(m.outbox, s)
@@ -51,6 +52,13 @@ func wrapForScrollback(s string, width int) string {
 	if width <= 0 {
 		return s
 	}
+	// Terminals advance a literal tab to the next 8-column stop, but ansi.Wrap
+	// counts it as one cell, so a tab-bearing line (glamour preserves tabs
+	// inside code fences; a user echo can carry pasted ones) passes the width
+	// check yet physically overflows - the exact drift this wrap exists to
+	// prevent. Expand before counting; \t never occurs inside an ANSI escape
+	// sequence, so a plain replace is safe on styled strings.
+	s = strings.ReplaceAll(s, "\t", "    ")
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
 		lines[i] = ansi.Wrap(line, width, "")
@@ -120,7 +128,15 @@ func (m Model) renderQueued() string {
 	if m.queued == nil {
 		return ""
 	}
-	lines := strings.Split(m.queued.echo, "\n")
+	// Width-3 leaves the border total at width-1, matching the divider's blank
+	// last column (the macOS last-column-wrap guard in View). lipgloss wraps the
+	// body to fit the inner width.
+	inner := max(m.width-3, 1)
+	// Wrap to the box's content width (inner minus Padding(0,1)) BEFORE capping,
+	// so the cap bounds VISUAL rows: a single long echo line would otherwise
+	// soft-wrap inside lipgloss after the cap counted it as one line, and the
+	// box could still push the status bar off-screen.
+	lines := strings.Split(ansi.Wrap(m.queued.echo, max(inner-2, 1), ""), "\n")
 	extra := 0
 	if len(lines) > queuedBodyCap {
 		extra = len(lines) - queuedBodyCap
@@ -130,10 +146,6 @@ func (m Model) renderQueued() string {
 	if extra > 0 {
 		body += fmt.Sprintf("\n+%d more", extra)
 	}
-	// Width-3 leaves the border total at width-1, matching the divider's blank
-	// last column (the macOS last-column-wrap guard in View). lipgloss wraps the
-	// body to fit the inner width.
-	inner := max(m.width-3, 1)
 	box := styleQueued.Width(inner).Render(body)
 	return styleDim.Render("queued · Backspace to edit") + "\n" + box
 }

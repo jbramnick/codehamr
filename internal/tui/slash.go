@@ -173,11 +173,13 @@ func (m *Model) printModelList() {
 // synchronously. Shared by /models.
 func (m *Model) confirmActive(profile string) tea.Cmd {
 	p := m.cfg.ActiveProfile()
+	// ActiveURL, not p.URL: under a CODEHAMR_URL override the banner must name
+	// the endpoint actually dialed, not the config value the override displaced.
 	if p.ResolvedKey() != "" {
-		m.appendLine(styleDim.Render(fmt.Sprintf("▶ probing %s · %s @ %s", profile, p.LLM, p.URL)))
+		m.appendLine(styleDim.Render(fmt.Sprintf("▶ probing %s · %s @ %s", profile, p.LLM, m.cfg.ActiveURL())))
 		return probeBackend(m.cli, profile, false)
 	}
-	m.appendLine(styleOK.Render(fmt.Sprintf("✓ active: %s · %s @ %s", profile, p.LLM, p.URL)))
+	m.appendLine(styleOK.Render(fmt.Sprintf("✓ active: %s · %s @ %s", profile, p.LLM, m.cfg.ActiveURL())))
 	return pingBackend(m.cli.BaseURL)
 }
 
@@ -220,7 +222,10 @@ func (m Model) cmdClear(_ []string) (tea.Model, tea.Cmd) {
 	line := styleOK.Render("✓ conversation reset")
 	fmt.Fprintf(m.scroll, "%s\n", line)
 	m.outbox = nil
-	return m, tea.Sequence(tea.ClearScreen, eraseScrollback, tea.Println(line))
+	// Wrap like the outbox drain would: this Println bypasses it (the Sequence
+	// owns the print), and every string handed to tea.Println must be wrapped
+	// or an over-width line drifts the renderer's cursor math.
+	return m, tea.Sequence(tea.ClearScreen, eraseScrollback, tea.Println(wrapForScrollback(line, m.width)))
 }
 
 // cmdExport writes a markdown summary of the current conversation to

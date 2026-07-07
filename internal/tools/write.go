@@ -13,6 +13,13 @@ func WriteFile(path, content string) string {
 	if path == "" {
 		return "(empty path)"
 	}
+	// Refuse an existing non-regular target: open(2) with O_WRONLY on a FIFO
+	// with no reader blocks forever, leaking the tool goroutine past Ctrl+C
+	// (which cancels the turn but can't unblock the open). Stat never blocks;
+	// directories fall through to os.WriteFile's immediate EISDIR.
+	if info, err := os.Stat(path); err == nil && !info.Mode().IsRegular() && !info.IsDir() {
+		return fmt.Sprintf("(write error: %s is not a regular file)", path)
+	}
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Sprintf("(mkdir error: %v)", err)

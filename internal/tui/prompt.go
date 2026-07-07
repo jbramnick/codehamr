@@ -424,13 +424,20 @@ func (p *promptInput) setCursorRuneOffset(offset int) {
 		if curRow == targetRow {
 			break
 		}
+		info := p.ta.LineInfo()
 		if curRow < targetRow {
 			p.ta.CursorDown()
 		} else {
 			p.ta.CursorUp()
 		}
-		if p.ta.Line() == curRow {
-			break // step did nothing, bail rather than spin
+		// Inside a soft-wrapped logical line a cursor step moves only the
+		// visual position (LineInfo), not Line(); that's progress toward the
+		// target row, not a wedged textarea. Bail only when nothing moved, or
+		// the walk stops one visual row short and SetCursor lands on the
+		// wrong logical row.
+		if next := p.ta.LineInfo(); p.ta.Line() == curRow &&
+			next.RowOffset == info.RowOffset && next.ColumnOffset == info.ColumnOffset {
+			break
 		}
 	}
 	p.ta.SetCursor(targetCol)

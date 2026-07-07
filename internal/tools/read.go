@@ -15,6 +15,13 @@ func ReadFile(path string) string {
 	if path == "" {
 		return "(empty path)"
 	}
+	// Refuse non-regular files up front: open(2) on a FIFO blocks forever
+	// waiting for a writer (leaking the tool goroutine past Ctrl+C, which
+	// cancels the turn but can't unblock the read), and an endless device file
+	// (/dev/zero) grows ReadFile's buffer without bound. Stat never blocks.
+	if info, err := os.Stat(path); err == nil && !info.Mode().IsRegular() && !info.IsDir() {
+		return fmt.Sprintf("(read error: %s is not a regular file)", path)
+	}
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Sprintf("(read error: %v)", err)

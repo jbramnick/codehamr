@@ -357,6 +357,38 @@ func TestChatSendsStreamIncludeUsage(t *testing.T) {
 	}
 }
 
+// TestChatMidStreamErrorFrameSurfacesAsError: OpenAI-compatible backends (and
+// OpenRouter-style proxies like the hosted endpoint) report a post-200
+// provider failure as a final `data: {"error":{...}}` frame followed by
+// connection close with no [DONE]. That frame must surface as EventError; left
+// undecoded it parses to zero choices, the close reads as clean EOF, and a
+// mid-sentence-truncated turn finalizes as a confident EventDone success.
+func TestChatMidStreamErrorFrameSurfacesAsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial answer\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"error\":{\"code\":502,\"message\":\"Provider returned error\"}}\n\n")
+		// connection closes without [DONE]
+	}))
+	defer srv.Close()
+
+	events := collect(New(srv.URL, "m", "").Chat(context.Background(),
+		[]chmctx.Message{{Role: chmctx.RoleUser, Content: "hi"}}, nil))
+
+	last := events[len(events)-1]
+	if last.Kind != EventError {
+		t.Fatalf("stream must end in EventError, got kind %v (events: %+v)", last.Kind, events)
+	}
+	if !strings.Contains(last.Err.Error(), "Provider returned error") {
+		t.Fatalf("error must carry the server's message, got %v", last.Err)
+	}
+	for _, e := range events {
+		if e.Kind == EventDone {
+			t.Fatal("a stream that died mid-generation must not emit EventDone")
+		}
+	}
+}
+
 // TestChatReadsUsageTokens: tokens come from `usage.completion_tokens` (and
 // prompt_tokens rides along for the debug-log calibration), not content
 // length; we trust what the backend reports.

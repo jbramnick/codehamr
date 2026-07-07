@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeRelease serves a goreleaser-style manifest plus one binary asset;
@@ -444,6 +445,45 @@ func TestCleanupOldNoopWhenMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	exec := filepath.Join(tmpDir, "jimmyhamr")
 	CleanupOld(exec) // must not panic, must not log
+}
+
+// TestCleanupOldSweepsOrphanedTempFiles: a Ctrl+C mid-download kills the
+// process before Apply's deferred Remove runs (no signal handler exists that
+// early), stranding a multi-MB .codehamr-update-* partial; each retry uses a
+// fresh random suffix, so only a launch-time sweep ever deletes them. Only
+// STALE temps are swept: a fresh one may be another instance's live download.
+// The running binary and unrelated files must survive.
+func TestCleanupOldSweepsOrphanedTempFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	exec := filepath.Join(tmpDir, "codehamr")
+	unrelated := filepath.Join(tmpDir, "notes.txt")
+	live := filepath.Join(tmpDir, ".codehamr-update-live")
+	orphans := []string{
+		filepath.Join(tmpDir, ".codehamr-update-1111"),
+		filepath.Join(tmpDir, ".codehamr-update-2222"),
+	}
+	for _, p := range append([]string{exec, unrelated, live}, orphans...) {
+		if err := os.WriteFile(p, []byte("x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stale := time.Now().Add(-2 * orphanSweepAge)
+	for _, p := range orphans {
+		if err := os.Chtimes(p, stale, stale); err != nil {
+			t.Fatal(err)
+		}
+	}
+	CleanupOld(exec)
+	for _, p := range orphans {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("stale orphan %s must be swept, stat err: %v", p, err)
+		}
+	}
+	for _, p := range []string{exec, unrelated, live} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("%s must survive the sweep: %v", p, err)
+		}
+	}
 }
 
 // TestApplyRespectsContextCancel: a cancelled ctx aborts the download and
