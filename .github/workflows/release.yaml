@@ -49,11 +49,12 @@ jobs:
       #   2. a renamed/reformatted asset assetName can no longer resolve.
       - name: Verify delivered assets are static and consistently named
         run: |
-          # goreleaser v2 with formats:[binary] places the renamed release assets
-          # flat in dist/ (e.g. dist/jimmyhamr-linux-amd64). Match that layout;
-          # fall back to subdirectory glob if layout changes.
+          # goreleaser v2 with formats:[binary] creates subdirectories named after
+          # the Go module (codehamr_linux_<arch>_v*) and places the renamed binary
+          # inside them. The flat dist/jimmyhamr-linux-<arch> names only exist as
+          # release assets, not on disk.
           found=0
-          for f in dist/jimmyhamr-linux-* dist/jimmyhamr_linux_*/jimmyhamr; do
+          for f in dist/codehamr_linux_*/jimmyhamr; do
             test -f "$f" || continue
             found=1
             if readelf -d "$f" | grep -q NEEDED; then
