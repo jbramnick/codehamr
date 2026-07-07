@@ -58,7 +58,7 @@ type promptEntry struct {
 func newPromptInput() promptInput {
 	ta := textarea.New()
 	ta.Placeholder = "Ask jimmyhamr. / or Tab for commands · Ctrl+C cancels"
-	ta.Blur() // no blinking cursor until user starts typing; Focus() in handleKey activates it
+	ta.Focus() // start with cursor visible; BlurMsg hides it when window loses focus
 	ta.CharLimit = 0
 	ta.MaxHeight = 0 // 0 = unbounded; recomputeLayout enforces the cap
 	ta.ShowLineNumbers = false
@@ -95,10 +95,6 @@ func chipLabel(lines int) string {
 // falls through to the textarea. reconcile() runs after any value-shifting path.
 func (p promptInput) Update(msg tea.Msg) (promptInput, tea.Cmd) {
 	if kmsg, ok := msg.(tea.KeyMsg); ok {
-		// Activate cursor on first user input (textarea starts blurred).
-		if !p.ta.Focused() {
-			p.ta.Focus()
-		}
 		if looksLikePaste(kmsg) {
 			if pasted := string(kmsg.Runes); shouldChip(pasted) {
 				p.insertChip(pasted)

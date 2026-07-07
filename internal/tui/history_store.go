@@ -49,6 +49,7 @@ func loadPromptHistory(dir string) []promptEntry {
 		}
 		out = append(out, promptEntry{display: v})
 	}
+	sc.Err() // silence linter; errors during scan would mean truncated entries
 	return out
 }
 

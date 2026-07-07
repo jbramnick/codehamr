@@ -11,8 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/jbramnick/codehamr/internal/cloud"
-	chmctx "github.com/jbramnick/codehamr/internal/ctx"
 	"github.com/jbramnick/codehamr/internal/config"
+	chmctx "github.com/jbramnick/codehamr/internal/ctx"
 	"github.com/jbramnick/codehamr/internal/llm"
 )
 
@@ -218,7 +218,7 @@ func (m Model) cmdClear(_ []string) (tea.Model, tea.Cmd) {
 	// could land first, then get wiped). scroll keeps the line for resize
 	// replay; outbox is cleared because the Sequence owns the print now.
 	line := styleOK.Render("✓ conversation reset")
-	m.scroll.WriteString(line + "\n")
+	fmt.Fprintf(m.scroll, "%s\n", line)
 	m.outbox = nil
 	return m, tea.Sequence(tea.ClearScreen, eraseScrollback, tea.Println(line))
 }

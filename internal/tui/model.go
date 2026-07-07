@@ -369,6 +369,7 @@ func (m Model) Init() tea.Cmd {
 		textarea.Blink,
 		m.spinner.Tick,
 		connectivity,
+		func() tea.Msg { return tea.FocusMsg{} }, // focus the textarea on start so cursor blinks immediately
 	)
 }
 
@@ -391,8 +392,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.FocusMsg:
-		m.ta.ta.Focus()
-		return m, nil
+		cmd := m.ta.ta.Focus()
+		return m, cmd
 	case tea.BlurMsg:
 		m.ta.ta.Blur()
 		return m, nil

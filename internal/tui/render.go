@@ -35,7 +35,7 @@ var splashHamr = []string{
 // so the terminal, not us, owns the scrollback. scroll is a passive
 // write-only transcript: never rendered, read only by tests and the debug log.
 func (m *Model) appendLine(s string) {
-	m.scroll.WriteString(s + "\n")
+	fmt.Fprintf(m.scroll, "%s\n", s)
 	m.outbox = append(m.outbox, s)
 }
 
