@@ -15,6 +15,7 @@ This is a fork of [codehamr/codehamr](https://github.com/codehamr/codehamr) with
 | **Cursor focus** | Cursor blink follows terminal focus: visible on focus, hidden on blur (`FocusMsg` → re-focus textarea, `BlurMsg` → blur it) | Focus/blur events are swallowed entirely to prevent escape fragments leaking into the prompt — cursor stays whatever state it was in |
 | **HamrPass** | Removed. No HamrPass profile or config section is seeded on first run | Optional paid endpoint (`hamrpass`) seeded alongside `local` and `openai` profiles; waitlist at codehamr.com |
 | **Import / Export** | Two new slash commands: `/export` writes the full conversation to `hamr_session_export.md`, `/import` loads it back into context and deletes the file. Useful for pausing a session and resuming later in a fresh run | Not available — no built-in way to persist and reload a conversation outside of chat history |
+| **AGENTS.md injection** | On startup, model.go looks for an `AGENTS.md` at the project root and injects its contents into context if it exists. Lets you drop repo-specific rules in a file the agent picks up automatically | Not available — no built-in mechanism to load a project-level markdown file into context on start |
 
 ## Install
 
