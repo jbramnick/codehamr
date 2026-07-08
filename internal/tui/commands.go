@@ -56,7 +56,14 @@ func readEvent(ch <-chan llm.Event) tea.Cmd {
 // silently override the model's bash timeout: a 30-min build dying at 3 min.
 func runToolCall(parent context.Context, call chmctx.ToolCall) tea.Cmd {
 	return func() tea.Msg {
-		return toolResultMsg{Msg: tools.Execute(parent, call), turnCtx: parent}
+		msg := tools.Execute(parent, call)
+		// view_image stashes the data URL in Arguments["_image_url"] so we can
+		// attach it to the tool-result message; llm.toWire then sends it as a
+		// multimodal content part instead of plain text.
+		if url, ok := call.Arguments["_image_url"].(string); ok && url != "" {
+			msg.ImageURL = url
+		}
+		return toolResultMsg{Msg: msg, turnCtx: parent}
 	}
 }
 

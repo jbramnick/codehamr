@@ -131,6 +131,9 @@ type Model struct {
 
 	// pending tool calls waiting to be executed after an assistant turn
 	pending []chmctx.ToolCall
+	// pendingImageURLs collects view_image data URLs across a multi-tool round;
+	// injected as user-role multimodal messages only after the queue drains.
+	pendingImageURLs []string
 
 	// turn-level stats (reset in finalizeTurn) + session-cumulative count
 	// (reset only by /clear, so the status bar carries the running session
@@ -300,7 +303,7 @@ func New(cfg *config.Config, cli *llm.Client, projectDir, version string) Model 
 	if dbgEnabled() {
 		dbgWriteSession(version, cfg.Active, cfg.ActiveProfile().LLM, cfg.ActiveURL(),
 			m.activeContextSize(), chmctx.Tokens(m.system),
-			[]string{tools.BashName, tools.ReadFileName, tools.WriteFileName, tools.EditFileName})
+			[]string{tools.BashName, tools.ReadFileName, tools.WriteFileName, tools.EditFileName, tools.ViewImageName})
 	}
 	// Seed prompt history from .jimmyhamr/history so ↑ recalls prompts from
 	// earlier sessions. Loaded entries carry no chip metadata (the on-disk
@@ -474,6 +477,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		dbgWriteMessage("tool_result", msg.Msg)
 		m.history = append(m.history, msg.Msg)
+		// Collect view_image data URLs across the turn; inject as user-role
+		// multimodal messages only after draining (OpenAI rejects arrays on
+		// role=tool, and we must not break assistant↔tool pairing mid-round).
+		if msg.Msg.ImageURL != "" {
+			m.pendingImageURLs = append(m.pendingImageURLs, msg.Msg.ImageURL)
+		}
 		m.recordToolOutcome(msg.Msg.ToolName, msg.Msg.Content)
 		// Drain every remaining call before re-entering chat: OpenAI rejects an
 		// assistant.tool_calls message followed by fewer tool messages than
@@ -482,9 +491,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.pending) > 0 {
 			return m.dispatchNextTool()
 		}
-		// Queue drained: only now is it safe to inject a system nudge. A
-		// system message wedged between assistant.tool_calls and its tool
-		// results would break that pairing and 400 the next request.
+		// Queue drained: inject collected view_image results as user-role
+		// multimodal messages, then system nudges (safe after tools drain).
+		for _, url := range m.pendingImageURLs {
+			m.history = append(m.history, chmctx.Message{
+				Role:     chmctx.RoleUser,
+				Content:  "[view_image result]",
+				ImageURL: url,
+			})
+		}
+		m.pendingImageURLs = nil
 		m.maybeFailureNudge()
 		m.maybeRunawayNudge()
 		m.phase = phaseThinking
@@ -646,6 +662,7 @@ func (m *Model) endTurn() {
 	m.cancel = nil
 	m.turnCtx = nil
 	m.pending = nil
+	m.pendingImageURLs = nil
 	m.toolRounds = 0
 	m.runawayNudged = false
 	m.emptyNudged = false
@@ -668,15 +685,16 @@ func (m *Model) buildMessages() []chmctx.Message {
 	return out
 }
 
-// buildTools exposes the four local tools every turn: bash, read_file,
-// write_file, edit_file. No loop/control tool; a turn ends when the model
-// stops emitting tool calls (see handleStreamClosed).
+// buildTools exposes the five local tools every turn: bash, read_file,
+// write_file, edit_file, view_image. No loop/control tool; a turn ends when
+// the model stops emitting tool calls (see handleStreamClosed).
 func (m *Model) buildTools() []llm.Tool {
 	return []llm.Tool{
 		schemaToTool(tools.BashSchema()),
 		schemaToTool(tools.ReadFileSchema()),
 		schemaToTool(tools.WriteFileSchema()),
 		schemaToTool(tools.EditFileSchema()),
+		schemaToTool(tools.ViewImageSchema()),
 	}
 }
 
@@ -1066,7 +1084,7 @@ const maxToolFailStreak = 5
 // while leaving varied exploration alone.
 func toolTargetKey(call chmctx.ToolCall) string {
 	switch call.Name {
-	case tools.WriteFileName, tools.EditFileName, tools.ReadFileName:
+	case tools.WriteFileName, tools.EditFileName, tools.ReadFileName, tools.ViewImageName:
 		path, _ := call.Arguments["path"].(string)
 		return call.Name + "|" + path
 	case tools.BashName:
@@ -1108,6 +1126,10 @@ func toolResultFailed(name, result string) bool {
 		// expr). Match only its two real failure outputs so a successful read
 		// isn't counted as a failure and made to feed the repeated-failure nudge.
 		return strings.HasPrefix(t, "(read error:") || t == "(empty path)"
+	case tools.ViewImageName:
+		// view_image returns metadata on success ("Image: png (800x600)") and
+		// errors in parens ("(view_image error: ...)").
+		return strings.HasPrefix(t, "(view_image error:")
 	case tools.BashName:
 		// "(empty command)" is bash's malformed-call outcome (missing/blank
 		// cmd), exact-matched like read_file's "(empty path)": successful bash

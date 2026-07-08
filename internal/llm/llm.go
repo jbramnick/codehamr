@@ -49,11 +49,21 @@ type FunctionDef struct {
 // empty tool-result string, and omitting the field makes Ollama's /v1 shim 400
 // with "invalid message content type: <nil>". Always send an explicit string.
 type wireMessage struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	Name       string     `json:"name,omitempty"`         // tool name
-	ToolCallID string     `json:"tool_call_id,omitempty"` // tool role
-	ToolCalls  []toolCall `json:"tool_calls,omitempty"`
+	Role       string      `json:"role"`
+	Content    any         `json:"content"` // string or []wireContentPart for multimodal
+	Name       string      `json:"name,omitempty"`         // tool name
+	ToolCallID string      `json:"tool_call_id,omitempty"` // tool role
+	ToolCalls  []toolCall  `json:"tool_calls,omitempty"`
+}
+
+type wireContentPart struct {
+	Type     string           `json:"type"`
+	Text     string           `json:"text,omitempty"`
+	ImageURL *wireImageURL    `json:"image_url,omitempty"`
+}
+
+type wireImageURL struct {
+	URL string `json:"url"`
 }
 
 type toolCall struct {
@@ -604,12 +614,22 @@ func toWire(msgs []chmctx.Message) []wireMessage {
 	for _, m := range msgs {
 		om := wireMessage{
 			Role:       string(m.Role),
-			Content:    m.Content,
 			Name:       m.ToolName,
 			ToolCallID: m.ToolCallID,
 		}
+		if m.ImageURL != "" && m.Role == chmctx.RoleUser {
+			// Multimodal content array: text part + image URL part. Only valid
+			// on role=user; OpenAI rejects arrays on tool/assistant/system.
+			om.Content = []wireContentPart{
+				{Type: "text", Text: m.Content},
+				{Type: "image_url", ImageURL: &wireImageURL{URL: m.ImageURL}},
+			}
+		} else {
+			om.Content = m.Content
+		}
 		for _, tc := range m.ToolCalls {
 			args, _ := json.Marshal(tc.Arguments)
+			// Strip internal keys that aren't real tool args.
 			om.ToolCalls = append(om.ToolCalls, toolCall{
 				ID:   tc.ID,
 				Type: "function",

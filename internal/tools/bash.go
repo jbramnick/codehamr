@@ -21,6 +21,7 @@ const (
 	WriteFileName = "write_file"
 	EditFileName  = "edit_file"
 	ReadFileName  = "read_file"
+	ViewImageName = "view_image"
 )
 
 // maxBashTimeoutSeconds caps the per-call timeout_seconds the model can
@@ -185,6 +186,13 @@ func runRaw(parent context.Context, call chmctx.ToolCall) string {
 	case ReadFileName:
 		path, _ := call.Arguments["path"].(string)
 		return ReadFile(path)
+	case ViewImageName:
+		path, _ := call.Arguments["path"].(string)
+		dataURL, meta := RunViewImage(path)
+		if dataURL != "" {
+			call.Arguments["_image_url"] = dataURL
+		}
+		return meta
 	default:
 		return fmt.Sprintf("(unknown tool: %s)", call.Name)
 	}
@@ -205,6 +213,9 @@ func InlineStatus(call chmctx.ToolCall) string {
 	case ReadFileName:
 		path, _ := call.Arguments["path"].(string)
 		return "▶ read_file: " + path
+	case ViewImageName:
+		path, _ := call.Arguments["path"].(string)
+		return "▶ view_image: " + path
 	default:
 		// Fall back to the first non-empty string arg.
 		for _, v := range call.Arguments {

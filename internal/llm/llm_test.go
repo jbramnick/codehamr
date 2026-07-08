@@ -935,3 +935,62 @@ func TestToWireParseErrorArgsStayValidJSON(t *testing.T) {
 		t.Fatalf("arguments must stay valid JSON to avoid poisoning the session: %q", args)
 	}
 }
+
+// TestToWireMultimodalImageURL: when a tool-result message carries ImageURL,
+// toWire must emit an OpenAI multimodal content array with text + image_url parts.
+func TestToWireMultimodalImageURL(t *testing.T) {
+	msgs := []chmctx.Message{
+		{Role: chmctx.RoleUser, Content: "what does this image show?"},
+		{Role: chmctx.RoleAssistant, ToolCalls: []chmctx.ToolCall{{ID: "c1", Name: "view_image"}}},
+		{Role: chmctx.RoleTool, Content: "Image: png (800x600)", ImageURL: "data:image/png;base64,fakebase64here", ToolCallID: "c1"},
+		// model.go injects this user-role message after the tool result.
+		{Role: chmctx.RoleUser, Content: "[view_image result for Image: png (800x600)]", ImageURL: "data:image/png;base64,fakebase64here"},
+	}
+
+	wire := toWire(msgs)
+
+	// User message stays plain string.
+	if wire[0].Content != "what does this image show?" {
+		t.Fatalf("user content should be a plain string, got %T(%v)", wire[0].Content, wire[0].Content)
+	}
+
+	// Tool result stays a plain string (OpenAI rejects content arrays on role=tool).
+	if wire[2].Content != "Image: png (800x600)" {
+		t.Fatalf("tool message with ImageURL should stay a string, got %T(%v)", wire[2].Content, wire[2].Content)
+	}
+
+	// User message WITH ImageURL emits multimodal content array.
+	parts, ok := wire[3].Content.([]wireContentPart)
+	if !ok {
+		t.Fatalf("user message with ImageURL should emit []wireContentPart, got %T(%v)", wire[3].Content, wire[3].Content)
+	}
+	if len(parts) != 2 || parts[0].Type != "text" || parts[1].Type != "image_url" {
+		t.Fatalf("expected [text, image_url] parts, got %+v", parts)
+	}
+
+	// Marshal to JSON and verify the tool message (index 2) has no array-style content,
+	// while the user message (index 3) does have image_url.
+	raw, err := json.Marshal(wire[2])
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	s := string(raw)
+	if strings.Contains(s, `"type":"image_url"`) {
+		t.Fatalf("tool message should NOT emit image_url array (role=tool rejects it):\n%s", s)
+	}
+}
+
+// TestToWireNoImageURLStaysString: a message without ImageURL must emit plain
+// string content (not an array), keeping the wire shape identical for normal turns.
+func TestToWireNoImageURLStaysString(t *testing.T) {
+	msgs := []chmctx.Message{{Role: chmctx.RoleUser, Content: "hello"}}
+	wire := toWire(msgs)
+	if wire[0].Content != "hello" {
+		t.Fatalf("plain message should stay a string, got %T(%v)", wire[0].Content, wire[0].Content)
+	}
+	raw, _ := json.Marshal(wire)
+	// Must NOT contain an array-style content.
+	if strings.Contains(string(raw), `"type":"text"`) {
+		t.Fatalf("plain message should not emit a content array:\n%s", raw)
+	}
+}

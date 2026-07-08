@@ -27,6 +27,7 @@ type ToolCall struct {
 type Message struct {
 	Role       Role       `json:"role"`
 	Content    string     `json:"content"`
+	ImageURL   string     `json:"-"` // data URL for vision models; never serializes to JSON, wired separately in llm.toWire
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	ToolName   string     `json:"name,omitempty"`
