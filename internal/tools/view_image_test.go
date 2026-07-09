@@ -1,13 +1,29 @@
 package tools
 
 import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"strings"
 	"testing"
 )
 
 func TestViewImageValid(t *testing.T) {
-	dataURL, meta := ViewImage("/tmp/test.png")
+	tmp := t.TempDir()
+	path := tmp + "/test.png"
+	buf := new(bytes.Buffer)
+	img := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+	img.Set(0, 0, color.NRGBA{255, 0, 0, 255})
+	if err := png.Encode(buf, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dataURL, meta := ViewImage(path)
 	if dataURL == "" {
 		t.Fatalf("expected non-empty data URL, got empty; meta=%s", meta)
 	}
