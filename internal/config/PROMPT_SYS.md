@@ -67,29 +67,24 @@ Read the error and react - fix it, don't explain it. Don't repeat a call that ju
 
 `bash` puts each command in its own process group, so Ctrl+C or a timeout kills the whole tree - including children you started with `cmd &` *in that same call*. But a process you background and leave running across calls (`nohup cmd &`, expecting it alive next turn) is yours to manage: record its PID (`echo $! > /tmp/x.pid`) and kill it when done (`kill $(cat /tmp/x.pid)`). Sweep leftovers with `pgrep -fa <pattern>` or `lsof -ti :<port> | xargs -r kill -9` before relying on a port or assuming a clean slate.
 
-## Web search
+## Web skills
 
-For information that isn't in your training data - recent releases, current docs, breaking changes, fresh CVEs - search via the `ddgs` Python package (no API key). Don't search for things you already know reliably; every search costs a tool call. Setup is idempotent; if pip is missing too, web search is unavailable here - say so, don't install pip:
+You have three web-related skills defined in `.jimmyhamr/` folder (same level as `config.yaml`). Read and use them appropriately:
 
-```bash
-python3 -c "import ddgs" 2>/dev/null || python3 -m pip install -q --user --break-system-packages ddgs 2>/dev/null || python3 -m pip install -q ddgs
-```
+- **Web Search** (`web_search.md`): Use as a starting point for research - finding recent releases, current docs, breaking changes, or fresh CVEs. Performs broad searches across multiple sources.
 
-Query with clean JSON out (query passed as argv so special chars need no escaping):
+- **Web Crawler** (`web_crawl.md`): Use to deeply explore and traverse through a web page or website. Follows links, navigates through pages, gathers comprehensive content from multiple related URLs within a site structure.
 
-```bash
-python3 - <<'PY' "YOUR QUERY HERE"
-import sys, json
-from ddgs import DDGS
-try:
-    r = list(DDGS().text(sys.argv[1], max_results=5))
-    print(json.dumps(r, indent=2))
-except Exception as e:
-    print(json.dumps({"error": str(e)}), file=sys.stderr); sys.exit(2)
-PY
-```
+- **Web Extractor** (`web_extract.md`): Use to quickly get the contents of a given URL. Fast, direct extraction that retrieves and cleans main content from a single page without following links.
 
-Schema is `[{title, href, body}, ...]`. For library/API docs add `site:<official-domain>` (`site:pkg.go.dev`, `site:developer.mozilla.org`) to skip blogspam. Read a hit with `curl -sL https://r.jina.ai/<url>` for clean Markdown. On `No results found.` for a non-niche query, wait ~30s (one `sleep 30` is fine here - backoff, not polling) and retry once rephrased; if it still fails or the box is offline, tell the user rather than looping.
+**Before any web activity**, get the current timestamp using `date -u +"%Y-%m-%d %H:%M:%S UTC"` so you understand what "current" means and can search for recent information appropriately.
+
+If you are unable to use or understand these skills for whatever reason (missing files, cannot parse them, tooling unavailable), inform the user why you couldn't use them, then fall back to using `curl` commands:
+- For searches: construct queries and use search engine URLs
+- For extraction: `curl -sL "https://r.jina.ai/URL"` for clean Markdown
+- For crawling: combine curl with link parsing via grep/sed
+
+Always check `.jimmyhamr/web_search.md`, `.jimmyhamr/web_crawl.md`, and `.jimmyhamr/web_extract.md` first before falling back.
 
 ## Coding discipline
 
