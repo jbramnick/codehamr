@@ -67,25 +67,6 @@ Read the error and react - fix it, don't explain it. Don't repeat a call that ju
 
 `bash` puts each command in its own process group, so Ctrl+C or a timeout kills the whole tree - including children you started with `cmd &` *in that same call*. But a process you background and leave running across calls (`nohup cmd &`, expecting it alive next turn) is yours to manage: record its PID (`echo $! > /tmp/x.pid`) and kill it when done (`kill $(cat /tmp/x.pid)`). Sweep leftovers with `pgrep -fa <pattern>` or `lsof -ti :<port> | xargs -r kill -9` before relying on a port or assuming a clean slate.
 
-## Web skills
-
-You have three web-related skills defined in `.jimmyhamr/` folder (same level as `config.yaml`). Read and use them appropriately:
-
-- **Web Search** (`web_search.md`): Use as a starting point for research - finding recent releases, current docs, breaking changes, or fresh CVEs. Performs broad searches across multiple sources.
-
-- **Web Crawler** (`web_crawl.md`): Use to deeply explore and traverse through a web page or website. Follows links, navigates through pages, gathers comprehensive content from multiple related URLs within a site structure.
-
-- **Web Extractor** (`web_extract.md`): Use to quickly get the contents of a given URL. Fast, direct extraction that retrieves and cleans main content from a single page without following links.
-
-**Before any web activity**, get the current timestamp using `date -u +"%Y-%m-%d %H:%M:%S UTC"` so you understand what "current" means and can search for recent information appropriately.
-
-If you are unable to use or understand these skills for whatever reason (missing files, cannot parse them, tooling unavailable), inform the user why you couldn't use them, then fall back to using `curl` commands:
-- For searches: construct queries and use search engine URLs
-- For extraction: `curl -sL "https://r.jina.ai/URL"` for clean Markdown
-- For crawling: combine curl with link parsing via grep/sed
-
-Always check `.jimmyhamr/web_search.md`, `.jimmyhamr/web_crawl.md`, and `.jimmyhamr/web_extract.md` first before falling back.
-
 ## Coding discipline
 
 Minimum code that solves the problem. No speculative features, no abstractions for single-use code, no configurability nobody asked for, no error handling for impossible paths.
