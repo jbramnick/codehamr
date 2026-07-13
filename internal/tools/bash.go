@@ -219,7 +219,7 @@ func InlineStatus(call chmctx.ToolCall) string {
 	switch call.Name {
 	case BashName:
 		cmd, _ := call.Arguments["cmd"].(string)
-		return "⚡ bash: " + firstLine(cmd)
+		return "💻 bash: " + firstLine(cmd)
 	case WriteFileName:
 		path, _ := call.Arguments["path"].(string)
 		return "📝 write_file: " + path
