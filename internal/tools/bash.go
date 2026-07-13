@@ -17,12 +17,20 @@ import (
 // Wire-format tool names. One source so schema, router, and inline-status
 // switch can't drift apart.
 const (
-	BashName      = "bash"
-	WriteFileName = "write_file"
-	EditFileName  = "edit_file"
-	ReadFileName  = "read_file"
-	ViewImageName = "view_image"
+	BashName           = "bash"
+	WriteFileName      = "write_file"
+	EditFileName       = "edit_file"
+	ReadFileName       = "read_file"
+	ViewImageName      = "view_image"
+	GetCurrenDateName  = "get_current_date"
 )
+
+var tavilyBaseURL string
+
+// SetTavilyBaseURL sets the Tavily base URL at runtime after config loads.
+func SetTavilyBaseURL(url string) {
+	tavilyBaseURL = url
+}
 
 // maxBashTimeoutSeconds caps the per-call timeout_seconds the model can
 // request, a backstop against runaway loops (`sleep 99999`, `while true`)
@@ -193,6 +201,14 @@ func runRaw(parent context.Context, call chmctx.ToolCall) string {
 			call.Arguments["_image_url"] = dataURL
 		}
 		return meta
+	case WebSearchName:
+		query, _ := call.Arguments["query"].(string)
+		return WebSearch(parent, query)
+	case WebExtractName:
+		url, _ := call.Arguments["url"].(string)
+		return WebExtract(parent, url)
+	case GetCurrenDateName:
+		return GetCurrenDate(parent)
 	default:
 		return fmt.Sprintf("(unknown tool: %s)", call.Name)
 	}
@@ -203,19 +219,27 @@ func InlineStatus(call chmctx.ToolCall) string {
 	switch call.Name {
 	case BashName:
 		cmd, _ := call.Arguments["cmd"].(string)
-		return "▶ bash: " + firstLine(cmd)
+		return "⚡ bash: " + firstLine(cmd)
 	case WriteFileName:
 		path, _ := call.Arguments["path"].(string)
-		return "▶ write_file: " + path
+		return "📝 write_file: " + path
 	case EditFileName:
 		path, _ := call.Arguments["path"].(string)
-		return "▶ edit_file: " + path
+		return "✏️ edit_file: " + path
 	case ReadFileName:
 		path, _ := call.Arguments["path"].(string)
-		return "▶ read_file: " + path
+		return "📖 read_file: " + path
 	case ViewImageName:
 		path, _ := call.Arguments["path"].(string)
-		return "▶ view_image: " + path
+		return "🖼️ view_image: " + path
+	case WebSearchName:
+		query, _ := call.Arguments["query"].(string)
+		return "🔍 web_search: " + firstLine(query)
+	case WebExtractName:
+		url, _ := call.Arguments["url"].(string)
+		return "📄 web_extract: " + firstLine(url)
+	case GetCurrenDateName:
+		return "📅 get_current_date"
 	default:
 		// Fall back to the first non-empty string arg.
 		for _, v := range call.Arguments {

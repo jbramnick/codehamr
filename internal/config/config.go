@@ -65,6 +65,10 @@ type Config struct {
 	// Debug instrumentation; removable with this field, debuglog.go, and the
 	// dbgWrite call sites.
 	Logging bool `yaml:"logging,omitempty"`
+	// TavilyBaseURL is the base URL for web_search/web_extract tools. Optional;
+	// when empty, those tools return an unavailable message. Supports `${VAR}`
+	// expansion like Profile.Key does.
+	TavilyBaseURL string `yaml:"tavily_base_url,omitempty"`
 	// runtime-only (not serialized)
 	Dir string `yaml:"-"`
 	// URLOverride, if set, wins over ActiveProfile().URL everywhere we dial
@@ -171,6 +175,14 @@ func Bootstrap(projectRoot string) (*Config, bool, error) {
 			return nil, false, errors.New("config.yaml: no profiles configured; add one under `models:` or delete .jimmyhamr/config.yaml to reseed defaults")
 		}
 		cfg.Active = names[0]
+	}
+	// TavilyBaseURL ${VAR} expansion: same pattern as Profile.ResolvedKey() so
+	// users can write tavily_base_url: ${TAVILY_BASE_URL} in config.yaml and have
+	// it expand at load time, while literal values pass through unchanged.
+	if name, ok := strings.CutPrefix(cfg.TavilyBaseURL, "${"); ok {
+		if name, ok = strings.CutSuffix(name, "}"); ok && isEnvName(name) {
+			cfg.TavilyBaseURL = os.Getenv(name)
+		}
 	}
 
 	return cfg, created, nil

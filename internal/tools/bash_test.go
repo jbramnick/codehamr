@@ -251,7 +251,7 @@ func TestExecuteUnknownTool(t *testing.T) {
 func TestInlineStatusBash(t *testing.T) {
 	s := InlineStatus(chmctx.ToolCall{Name: "bash",
 		Arguments: map[string]any{"cmd": "ls -la\nrm /tmp/x"}})
-	if !strings.HasPrefix(s, "▶ bash: ls -la") || strings.Contains(s, "\n") {
+	if !strings.HasPrefix(s, "⚡ bash: ls -la") || strings.Contains(s, "\n") {
 		t.Fatalf("bad inline status: %q", s)
 	}
 }

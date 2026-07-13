@@ -170,7 +170,7 @@ func TestInlineStatusWriteFile(t *testing.T) {
 		Name:      "write_file",
 		Arguments: map[string]any{"path": "/tmp/foo.txt", "content": "x"},
 	})
-	if !strings.HasPrefix(s, "▶ write_file: /tmp/foo.txt") {
+	if !strings.HasPrefix(s, "📝 write_file: /tmp/foo.txt") {
 		t.Fatalf("bad inline status: %q", s)
 	}
 }

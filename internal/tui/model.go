@@ -296,6 +296,8 @@ func New(cfg *config.Config, cli *llm.Client, projectDir, version string) Model 
 		histIdx:         -1,
 		liveContextSize: map[string]int{},
 	}
+	// Wire Tavily base URL into tools package at runtime
+	tools.SetTavilyBaseURL(cfg.TavilyBaseURL)
 	// Record the active backend + budget once, before any turn, so a shared log
 	// names exactly which model/endpoint/context window produced the behaviour.
 	// Gated on dbgEnabled so the profile derefs run only when logging is on;
@@ -303,7 +305,7 @@ func New(cfg *config.Config, cli *llm.Client, projectDir, version string) Model 
 	if dbgEnabled() {
 		dbgWriteSession(version, cfg.Active, cfg.ActiveProfile().LLM, cfg.ActiveURL(),
 			m.activeContextSize(), chmctx.Tokens(m.system),
-			[]string{tools.BashName, tools.ReadFileName, tools.WriteFileName, tools.EditFileName, tools.ViewImageName})
+			[]string{tools.BashName, tools.ReadFileName, tools.WriteFileName, tools.EditFileName, tools.ViewImageName, tools.WebSearchName, tools.WebExtractName, tools.GetCurrenDateName})
 	}
 	// Seed prompt history from .jimmyhamr/history so ↑ recalls prompts from
 	// earlier sessions. Loaded entries carry no chip metadata (the on-disk
@@ -685,9 +687,10 @@ func (m *Model) buildMessages() []chmctx.Message {
 	return out
 }
 
-// buildTools exposes the five local tools every turn: bash, read_file,
-// write_file, edit_file, view_image. No loop/control tool; a turn ends when
-// the model stops emitting tool calls (see handleStreamClosed).
+// buildTools exposes the eight local tools every turn: bash, read_file,
+// write_file, edit_file, view_image, web_search, web_extract, get_current_date.
+// No loop/control tool; a turn ends when the model stops emitting tool calls
+// (see handleStreamClosed).
 func (m *Model) buildTools() []llm.Tool {
 	return []llm.Tool{
 		schemaToTool(tools.BashSchema()),
@@ -695,6 +698,9 @@ func (m *Model) buildTools() []llm.Tool {
 		schemaToTool(tools.WriteFileSchema()),
 		schemaToTool(tools.EditFileSchema()),
 		schemaToTool(tools.ViewImageSchema()),
+		schemaToTool(tools.WebSearchSchema()),
+		schemaToTool(tools.WebExtractSchema()),
+		schemaToTool(tools.GetCurrenDateSchema()),
 	}
 }
 
@@ -1093,13 +1099,20 @@ func toolTargetKey(call chmctx.ToolCall) string {
 			cmd = cmd[:i]
 		}
 		return call.Name + "|" + strings.TrimSpace(cmd)
+	case tools.WebSearchName:
+		query, _ := call.Arguments["query"].(string)
+		return call.Name + "|" + query
+	case tools.WebExtractName:
+		url, _ := call.Arguments["url"].(string)
+		return call.Name + "|" + url
+	case tools.GetCurrenDateName:
+		return call.Name + "|"
 	}
 	return call.Name
 }
 
 // toolResultFailed reports whether a tool result is an error the model should
 // react to. File tools wrap errors in parens ("(write error: ...)", "(not
-// found: ...)") and report success as plain text ("wrote N bytes"); bash
 // appends "(exit: N)" / "(timeout after ...)" on failure. A user Ctrl+C
 // ("(cancelled)") never counts as a failure.
 func toolResultFailed(name, result string) bool {
@@ -1138,6 +1151,12 @@ func toolResultFailed(name, result string) bool {
 		// builds a streak and slips past the backstop to the runaway cap.
 		return strings.Contains(result, "\n(exit: ") || strings.Contains(result, "(timeout after ") ||
 			t == "(empty command)"
+	case tools.WebSearchName:
+		return strings.HasPrefix(t, "(web_search error:") || strings.HasPrefix(t, "(web_search unavailable:")
+	case tools.WebExtractName:
+		return strings.HasPrefix(t, "(web_extract error:") || strings.HasPrefix(t, "(web_extract unavailable:")
+	case tools.GetCurrenDateName:
+		return strings.HasPrefix(t, "(get_current_date error:")
 	}
 	return false
 }

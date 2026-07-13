@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -658,5 +659,78 @@ func TestSaveTightensPreexistingLoosePerms(t *testing.T) {
 	}
 	if got := st.Mode().Perm(); got != 0o600 {
 		t.Fatalf("Save() must tighten a pre-existing 0o644 config.yaml to 0o600, got %v - key stays world-readable across an upgrade", got)
+	}
+}
+
+func TestTavilyBaseURLRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	// Bootstrap creates .jimmyhamr/ and config.yaml so cfg.Dir is correct.
+	cfg, _, err := Bootstrap(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.TavilyBaseURL = "https://api.tavily.com"
+
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read back and check round-trip
+	data, err := os.ReadFile(filepath.Join(tmp, DirName, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("tavily_base_url: https://api.tavily.com")) {
+		t.Fatalf("round-trip failed, missing tavily_base_url in:\n%s", data)
+	}
+
+	// Bootstrap and verify load
+	cfg2, _, err := Bootstrap(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg2.TavilyBaseURL != "https://api.tavily.com" {
+		t.Fatalf("loaded TavilyBaseURL = %q, want %q", cfg2.TavilyBaseURL, "https://api.tavily.com")
+	}
+}
+
+func TestTavilyBaseURLEnvExpansion(t *testing.T) {
+	const envName = "TEST_TAVILY_URL"
+	const expectedURL = "https://expanded.example.com"
+
+	t.Setenv(envName, expectedURL)
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"literal value", "https://literal.example.com", "https://literal.example.com"},
+		{"valid env ref", "${TEST_TAVILY_URL}", expectedURL},
+		{"invalid env ref (bad name)", "${123invalid}", "${123invalid}"}, // not expanded
+		{"missing var", "${MISSING_VAR_12345}", ""}, // expands to empty
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			cfg, _, err := Bootstrap(tmp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.TavilyBaseURL = tt.input
+
+			if err := cfg.Save(); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg2, _, err := Bootstrap(tmp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg2.TavilyBaseURL != tt.expected {
+				t.Fatalf("TavilyBaseURL = %q, want %q", cfg2.TavilyBaseURL, tt.expected)
+			}
+		})
 	}
 }

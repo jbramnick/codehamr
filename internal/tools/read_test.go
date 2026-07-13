@@ -108,7 +108,7 @@ func TestInlineStatusReadFile(t *testing.T) {
 		Name:      ReadFileName,
 		Arguments: map[string]any{"path": "/tmp/foo.go"},
 	})
-	if !strings.HasPrefix(s, "▶ read_file: /tmp/foo.go") {
+	if !strings.HasPrefix(s, "📖 read_file: /tmp/foo.go") {
 		t.Fatalf("bad inline status: %q", s)
 	}
 }

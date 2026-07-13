@@ -211,7 +211,7 @@ func TestInlineStatusEditFile(t *testing.T) {
 			"new_string": "b",
 		},
 	})
-	if !strings.HasPrefix(s, "▶ edit_file: /tmp/x.txt") {
+	if !strings.HasPrefix(s, "✏️ edit_file: /tmp/x.txt") {
 		t.Fatalf("bad inline status: %q", s)
 	}
 }
